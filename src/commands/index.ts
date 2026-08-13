@@ -557,7 +557,11 @@ async function analyze(i: ChatInputCommandInteraction) {
 function messagesSince(guild: string, since: string, limit = 120) {
   return db
     .prepare(
-      `SELECT m.content,u.display_name FROM messages m LEFT JOIN users u ON u.id=m.user_id WHERE m.guild_id=? AND m.created_at>? ORDER BY m.created_at DESC LIMIT ?`,
+      `SELECT m.content,m.user_id,m.reply_to_user_id,u.display_name,ru.display_name reply_to_display_name
+      FROM messages m
+      LEFT JOIN users u ON u.id=m.user_id AND u.guild_id=m.guild_id
+      LEFT JOIN users ru ON ru.id=m.reply_to_user_id AND ru.guild_id=m.guild_id
+      WHERE m.guild_id=? AND m.created_at>? ORDER BY m.created_at DESC LIMIT ?`,
     )
     .all(guild, since, limit)
     .reverse() as any[];
@@ -575,22 +579,30 @@ async function summarizeCommand(i: ChatInputCommandInteraction, guild: string) {
       ? messagesSince(guild, since, limit)
       : (db
           .prepare(
-            `SELECT m.content,u.display_name FROM messages m LEFT JOIN users u ON u.id=m.user_id WHERE m.guild_id=? AND m.channel_id=? ORDER BY m.created_at DESC LIMIT ?`,
+            `SELECT m.content,m.user_id,m.reply_to_user_id,u.display_name,ru.display_name reply_to_display_name
+            FROM messages m
+            LEFT JOIN users u ON u.id=m.user_id AND u.guild_id=m.guild_id
+            LEFT JOIN users ru ON ru.id=m.reply_to_user_id AND ru.guild_id=m.guild_id
+            WHERE m.guild_id=? AND m.channel_id=? ORDER BY m.created_at DESC LIMIT ?`,
           )
           .all(guild, i.channelId, limit)
           .reverse() as any[]);
   if (!rows.length) return void (await i.editReply('nothing to summarize. the void is concise.'));
+  const social = summarizeInteractions(guild, rows);
   const text = rows
-    .map((r) => `${r.display_name}: ${r.content}`)
+    .map((r) => {
+      const reply = r.reply_to_display_name ? ` replying to ${r.reply_to_display_name}` : '';
+      return `${r.display_name ?? `<@${r.user_id}>`}${reply}: ${humanizeMentions(guild, r.content)}`;
+    })
     .join('\n')
     .slice(-9000);
   const out = await complete([
     {
       role: 'system',
       content:
-        'Summarize Discord chat as NPC: concise, witty, factual. Include sections: Main Topic, Summary, Key Participants, Important Decisions, Funniest Moment, Server Mood. Do not invent.',
+        'Summarize Discord chat as NPC: concise, witty, factual. Include sections: Main Topic, Summary, Key Participants, Important Decisions, Funniest Moment, Server Mood. Treat @names and reply labels as real social interactions. Mention who talked to, replied to, or called out whom when relevant. Do not invent.',
     },
-    { role: 'user', content: text },
+    { role: 'user', content: `${social}\n\nChat transcript:\n${text}` },
   ]);
   await i.editReply(out);
 }
@@ -672,7 +684,10 @@ async function journal(i: ChatInputCommandInteraction, guild: string) {
     )
     .all(guild, since) as any[];
   const prompt = `Recent chat:\n${rows
-    .map((r) => `${r.display_name}: ${r.content}`)
+    .map((r) => {
+      const reply = r.reply_to_display_name ? ` replying to ${r.reply_to_display_name}` : '';
+      return `${r.display_name ?? `<@${r.user_id}>`}${reply}: ${humanizeMentions(guild, r.content)}`;
+    })
     .join('\n')
     .slice(-7000)}\nLore:\n${lore.map((l) => l.content).join('\n')}`;
   const entry = await complete([
@@ -687,6 +702,54 @@ async function journal(i: ChatInputCommandInteraction, guild: string) {
     'INSERT INTO npc_journal(guild_id,content,period_start,created_at) VALUES(?,?,?,?)',
   ).run(guild, entry, since, now());
   await i.editReply(entry);
+}
+
+function humanizeMentions(guild: string, content: string) {
+  return content.replace(/<@!?(\d+)>/g, (_match, id: string) => {
+    const name = nameOf(guild, id);
+    return name.startsWith('<@') ? name : `@${name}`;
+  });
+}
+
+function summarizeInteractions(guild: string, rows: any[]) {
+  const participants = new Map<string, string>();
+  const mentions: string[] = [];
+  const replies: string[] = [];
+  for (const row of rows) {
+    const speaker = row.display_name ?? `<@${row.user_id}>`;
+    participants.set(row.user_id, speaker);
+    for (const match of String(row.content).matchAll(/<@!?(\d+)>/g)) {
+      const target = nameOf(guild, match[1]!);
+      mentions.push(`${speaker} mentioned ${target}`);
+      participants.set(match[1]!, target);
+    }
+    if (row.reply_to_user_id) {
+      const target = row.reply_to_display_name ?? nameOf(guild, row.reply_to_user_id);
+      replies.push(`${speaker} replied to ${target}`);
+      participants.set(row.reply_to_user_id, target);
+    }
+  }
+  const relationshipRows = db
+    .prepare(
+      `SELECT * FROM relationships WHERE guild_id=?
+      ORDER BY mentions+replies+messages_together+reactions+gaming_together+rivalry+voice_seconds/600 DESC LIMIT 6`,
+    )
+    .all(guild) as any[];
+  return [
+    `Known participants: ${[...participants.values()].join(', ') || 'none'}`,
+    mentions.length ? `Mentions detected: ${mentions.slice(-10).join('; ')}` : '',
+    replies.length ? `Replies detected: ${replies.slice(-10).join('; ')}` : '',
+    relationshipRows.length
+      ? `Existing relationship context: ${relationshipRows
+          .map(
+            (r) =>
+              `${nameOf(guild, r.user_a)} + ${nameOf(guild, r.user_b)}: ${r.mentions} mentions, ${r.replies} replies, ${r.messages_together} nearby chat, ${r.reactions} reactions, ${r.rivalry} rivalry signals`,
+          )
+          .join('; ')}`
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 export async function autocomplete(i: AutocompleteInteraction) {

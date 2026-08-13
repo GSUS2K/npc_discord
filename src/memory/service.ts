@@ -1,4 +1,4 @@
-import type { Message } from 'discord.js';
+import type { Message, User } from 'discord.js';
 import { db, now } from '../database/index.js';
 import type { MemoryRow } from '../types.js';
 
@@ -66,15 +66,19 @@ export function recordMessage(message: Message<true>) {
       ON CONFLICT(guild_id,phrase) DO UPDATE SET count=count+1,last_user_id=excluded.last_user_id,last_seen=excluded.last_seen`,
     ).run(message.guildId, phrase, message.author.id, message.author.id, time);
   }
-  for (const mentioned of message.mentions.users.values())
+  for (const mentioned of message.mentions.users.values()) {
+    ensureObservedUser(message.guildId, mentioned);
     updateRelationship(message.guildId, message.author.id, mentioned.id, 'mentions');
-  if (message.mentions.repliedUser)
+  }
+  if (message.mentions.repliedUser) {
+    ensureObservedUser(message.guildId, message.mentions.repliedUser);
     updateRelationship(
       message.guildId,
       message.author.id,
       message.mentions.repliedUser.id,
       'replies',
     );
+  }
   if (isPlayfulBanter(message.content)) {
     for (const mentioned of message.mentions.users.values())
       updateRelationship(message.guildId, message.author.id, mentioned.id, 'rivalry');
@@ -99,6 +103,14 @@ export function recordMessage(message: Message<true>) {
     ) as { user_id: string }[];
   for (const user of nearby)
     updateRelationship(message.guildId, message.author.id, user.user_id, 'messages_together');
+}
+
+function ensureObservedUser(guildId: string, user: User) {
+  const time = now();
+  db.prepare(
+    `INSERT INTO users(id,guild_id,username,display_name,message_count,first_seen,last_seen)
+    VALUES(?,?,?,?,0,?,?) ON CONFLICT(id) DO UPDATE SET username=excluded.username,display_name=excluded.display_name,last_seen=excluded.last_seen`,
+  ).run(user.id, guildId, user.username, user.displayName, time, time);
 }
 
 function extractPhrases(content: string): string[] {
