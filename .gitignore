@@ -1,0 +1,10 @@
+node_modules/
+dist/
+data/
+.env
+.env.*
+,env*
+*env*.txt
+*.log
+.codex-start.*.log
+.eslintcache

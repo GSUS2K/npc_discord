@@ -1,0 +1,712 @@
+import {
+  type AutocompleteInteraction,
+  ChatInputCommandInteraction,
+  MessageFlags,
+  SlashCommandBuilder,
+  type User,
+} from 'discord.js';
+import { complete } from '../ai/providers.js';
+import { db, now } from '../database/index.js';
+import { addMemory } from '../memory/service.js';
+
+const lore = new SlashCommandBuilder()
+  .setName('lore')
+  .setDescription('Open the server archives')
+  .addSubcommand((s) =>
+    s
+      .setName('add')
+      .setDescription('Preserve an incident forever')
+      .addStringOption((o) =>
+        o.setName('story').setDescription('What happened?').setRequired(true).setMaxLength(800),
+      )
+      .addStringOption((o) => o.setName('tags').setDescription('Comma-separated tags'))
+      .addIntegerOption((o) =>
+        o.setName('importance').setDescription('How historic?').setMinValue(1).setMaxValue(10),
+      ),
+  )
+  .addSubcommand((s) => s.setName('random').setDescription('Unearth a random incident'))
+  .addSubcommand((s) =>
+    s
+      .setName('search')
+      .setDescription('Search the archives')
+      .addStringOption((o) =>
+        o.setName('query').setDescription('Name, phrase, or tag').setRequired(true),
+      ),
+  )
+  .addSubcommand((s) => s.setName('top').setDescription('The most sacred texts'));
+
+const quote = new SlashCommandBuilder()
+  .setName('quote')
+  .setDescription('Archive legendary dialogue')
+  .addSubcommand((s) =>
+    s
+      .setName('add')
+      .setDescription('Archive a quote')
+      .addUserOption((o) => o.setName('user').setDescription('Who said it').setRequired(true))
+      .addStringOption((o) =>
+        o
+          .setName('text')
+          .setDescription('Their immortal words')
+          .setRequired(true)
+          .setMaxLength(500),
+      ),
+  )
+  .addSubcommand((s) => s.setName('random').setDescription('Summon a random quote'))
+  .addSubcommand((s) =>
+    s
+      .setName('user')
+      .setDescription('Quote a specific person')
+      .addUserOption((o) =>
+        o.setName('member').setDescription('The alleged speaker').setRequired(true),
+      ),
+  )
+  .addSubcommand((s) =>
+    s
+      .setName('search')
+      .setDescription('Search legendary nonsense')
+      .addStringOption((o) => o.setName('query').setDescription('Words to find').setRequired(true)),
+  );
+
+const tldr = new SlashCommandBuilder()
+  .setName('tldr')
+  .setDescription('Summarize recent server chaos')
+  .addStringOption((o) =>
+    o
+      .setName('amount')
+      .setDescription('How far back?')
+      .addChoices(
+        { name: '20 messages', value: '20' },
+        { name: '50 messages', value: '50' },
+        { name: '100 messages', value: '100' },
+        { name: 'today', value: 'today' },
+      ),
+  );
+const recap = new SlashCommandBuilder()
+  .setName('recap')
+  .setDescription('Catch up on a period')
+  .addStringOption((o) =>
+    o
+      .setName('period')
+      .setDescription('Period')
+      .setRequired(true)
+      .addChoices(
+        { name: 'today', value: 'today' },
+        { name: 'week', value: 'week' },
+        { name: 'month', value: 'month' },
+      ),
+  );
+
+const simpleCommands = [
+  new SlashCommandBuilder().setName('randomquote').setDescription('Summon a random quote'),
+  new SlashCommandBuilder()
+    .setName('catchup')
+    .setDescription('What changed since your last catchup?'),
+  new SlashCommandBuilder()
+    .setName('whatdidimiss')
+    .setDescription('Alias for catchup, for the dramatically absent'),
+  recap,
+  tldr,
+  new SlashCommandBuilder().setName('trending').setDescription('See the current server heat map'),
+  new SlashCommandBuilder()
+    .setName('npcjournal')
+    .setDescription('NPC writes a diary entry about recent server events'),
+  new SlashCommandBuilder()
+    .setName('reputation')
+    .setDescription('Inspect a community reputation')
+    .addUserOption((o) => o.setName('user').setDescription('Member')),
+  new SlashCommandBuilder()
+    .setName('whois')
+    .setDescription('Consult NPC records')
+    .addUserOption((o) => o.setName('user').setDescription('Member').setRequired(true)),
+  new SlashCommandBuilder()
+    .setName('server-legends')
+    .setDescription("See today's suspiciously scientific rankings"),
+  new SlashCommandBuilder()
+    .setName('friends')
+    .setDescription('Find your statistically closest allies')
+    .addUserOption((o) => o.setName('user').setDescription('Member')),
+  new SlashCommandBuilder()
+    .setName('rivals')
+    .setDescription('Find your destined opposition')
+    .addUserOption((o) => o.setName('user').setDescription('Member')),
+  new SlashCommandBuilder()
+    .setName('besties')
+    .setDescription('Measure mutual suffering')
+    .addUserOption((o) => o.setName('user').setDescription('First member').setRequired(true))
+    .addUserOption((o) => o.setName('other').setDescription('Second member').setRequired(true)),
+  new SlashCommandBuilder()
+    .setName('game-profile')
+    .setDescription('Inspect a gaming profile')
+    .addUserOption((o) => o.setName('user').setDescription('Member')),
+  new SlashCommandBuilder().setName('game-stats').setDescription('See the server gaming census'),
+  new SlashCommandBuilder()
+    .setName('party')
+    .setDescription('Find fellow sufferers')
+    .addStringOption((o) =>
+      o.setName('game').setDescription('Game').setRequired(true).setAutocomplete(true),
+    ),
+  new SlashCommandBuilder()
+    .setName('vcstats')
+    .setDescription('Inspect voice-channel habits')
+    .addUserOption((o) => o.setName('user').setDescription('Member')),
+  new SlashCommandBuilder().setName('voice-legends').setDescription('Rank the voice goblins'),
+  new SlashCommandBuilder().setName('ancient-lore').setDescription('Unearth something old'),
+  new SlashCommandBuilder().setName('onthisday').setDescription('Consult today in server history'),
+  new SlashCommandBuilder()
+    .setName('patchnotes')
+    .setDescription('Read deeply legitimate balance changes'),
+  new SlashCommandBuilder().setName('quest').setDescription("See today's community quest"),
+  new SlashCommandBuilder()
+    .setName('achievements')
+    .setDescription('Inspect unlocked achievements')
+    .addUserOption((o) => o.setName('user').setDescription('Member')),
+  new SlashCommandBuilder()
+    .setName('analyze')
+    .setDescription('Submit a clip or meme to the council')
+    .addAttachmentOption((o) =>
+      o.setName('file').setDescription('Clip, image, or meme').setRequired(true),
+    ),
+];
+
+export const commandData = [lore, quote, ...simpleCommands];
+
+const bullet = '-';
+const bar = (value: number) =>
+  `${'#'.repeat(Math.round(value / 10))}${'.'.repeat(10 - Math.round(value / 10))} ${value}%`;
+const nameOf = (guildId: string, id: string) =>
+  (db.prepare('SELECT display_name FROM users WHERE guild_id=? AND id=?').get(guildId, id) as any)
+    ?.display_name ?? `<@${id}>`;
+const relationship = (guildId: string, a: string, b: string) => {
+  const [x, y] = [a, b].sort();
+  return db
+    .prepare('SELECT * FROM relationships WHERE guild_id=? AND user_a=? AND user_b=?')
+    .get(guildId, x, y) as any;
+};
+function ensureUser(guildId: string, user: User) {
+  const time = now();
+  db.prepare(
+    `INSERT INTO users(id,guild_id,username,display_name,message_count,first_seen,last_seen) VALUES(?,?,?,?,0,?,?)
+  ON CONFLICT(id) DO UPDATE SET username=excluded.username,display_name=excluded.display_name`,
+  ).run(user.id, guildId, user.username, user.displayName, time, time);
+}
+
+export async function executeCommand(i: ChatInputCommandInteraction) {
+  if (!i.guildId)
+    return void (await i.reply({
+      content: 'server records only. the void has no lore.',
+      flags: MessageFlags.Ephemeral,
+    }));
+  const guild = i.guildId;
+  ensureUser(guild, i.user);
+  const firstUser =
+    i.options.getUser('user') ?? i.options.getUser('member') ?? i.options.getUser('other');
+  if (firstUser) ensureUser(guild, firstUser);
+  if (i.commandName === 'lore') return loreCommand(i, guild);
+  if (i.commandName === 'quote') return quoteCommand(i, guild);
+  if (i.commandName === 'randomquote') return void (await i.reply(randomQuote(guild)));
+  const target = i.options.getUser('user') ?? i.user;
+  switch (i.commandName) {
+    case 'tldr':
+      return summarizeCommand(i, guild);
+    case 'catchup':
+    case 'whatdidimiss':
+      return catchup(i, guild);
+    case 'recap':
+      return recapCommand(i, guild, i.options.getString('period', true));
+    case 'trending':
+      return void (await i.reply(trending(guild)));
+    case 'npcjournal':
+      return journal(i, guild);
+    case 'reputation':
+      return void (await i.reply(reputation(guild, target)));
+    case 'whois':
+      return void (await i.reply(profile(guild, target)));
+    case 'server-legends':
+      return void (await i.reply(legendBoard(guild)));
+    case 'friends':
+      return void (await i.reply(relationList(guild, target.id, false)));
+    case 'rivals':
+      return void (await i.reply(relationList(guild, target.id, true)));
+    case 'besties': {
+      const a = i.options.getUser('user', true),
+        b = i.options.getUser('other', true);
+      ensureUser(guild, a);
+      ensureUser(guild, b);
+      const r = relationship(guild, a.id, b.id);
+      const score = Math.min(
+        99,
+        20 +
+          (r?.mentions ?? 0) * 2 +
+          (r?.replies ?? 0) * 3 +
+          (r?.messages_together ?? 0) +
+          Math.floor((r?.voice_seconds ?? 0) / 1800) +
+          (r?.gaming_together ?? 0) * 5,
+      );
+      return void (await i.reply(
+        `**${a.displayName} + ${b.displayName}**\nFriendship Rating: ${bar(score)}\nMentions: ${r?.mentions ?? 0}\nReplies: ${r?.replies ?? 0}\nShared VC: ${Math.round((r?.voice_seconds ?? 0) / 60)} min\nMutual Suffering: ${score > 70 ? 'High' : score > 40 ? 'Developing nicely' : 'Needs more queueing'}`,
+      ));
+    }
+    case 'game-profile':
+      return void (await i.reply(gameProfile(guild, target.id)));
+    case 'game-stats':
+      return void (await i.reply(gameStats(guild)));
+    case 'party':
+      return party(i, guild);
+    case 'vcstats':
+      return void (await i.reply(vcStats(guild, target.id)));
+    case 'voice-legends':
+      return void (await i.reply(voiceLegends(guild)));
+    case 'ancient-lore':
+      return void (await i.reply(randomLore(guild, 'ORDER BY created_at ASC')));
+    case 'onthisday':
+      return void (await i.reply(onThisDay(guild)));
+    case 'patchnotes':
+      return void (await i.reply(patchNotes(guild)));
+    case 'quest':
+      return void (await i.reply(todayQuest(guild)));
+    case 'achievements':
+      return void (await i.reply(achievementList(guild, target.id)));
+    case 'analyze':
+      return analyze(i);
+  }
+}
+
+async function loreCommand(i: ChatInputCommandInteraction, guild: string) {
+  const sub = i.options.getSubcommand();
+  if (sub === 'add') {
+    const story = i.options.getString('story', true);
+    const tags = (i.options.getString('tags') ?? '')
+      .split(',')
+      .map((t) => t.trim())
+      .filter(Boolean);
+    const involved = [...story.matchAll(/<@!?(\d+)>/g)].map((m) => m[1]);
+    db.prepare(
+      'INSERT INTO lore(guild_id,author_id,content,users_involved,tags,importance,created_at) VALUES(?,?,?,?,?,?,?)',
+    ).run(
+      guild,
+      i.user.id,
+      story,
+      JSON.stringify(involved),
+      JSON.stringify(tags),
+      i.options.getInteger('importance') ?? 5,
+      now(),
+    );
+    addMemory(
+      guild,
+      null,
+      `According to the archives: ${story}`,
+      'lore',
+      i.options.getInteger('importance') ?? 5,
+    );
+    return void (await i.reply('archived. future generations will judge everyone involved.'));
+  }
+  if (sub === 'random') return void (await i.reply(randomLore(guild, 'ORDER BY RANDOM()')));
+  if (sub === 'top')
+    return void (await i.reply(loreList(guild, 'ORDER BY score DESC, importance DESC LIMIT 8')));
+  const q = `%${i.options.getString('query', true)}%`;
+  const rows = db
+    .prepare(
+      'SELECT * FROM lore WHERE guild_id=? AND (content LIKE ? OR tags LIKE ?) ORDER BY importance DESC LIMIT 8',
+    )
+    .all(guild, q, q) as any[];
+  return void (await i.reply(
+    rows.length
+      ? `**Archive Search**\n${rows.map((r) => `#${r.id} - ${r.content}`).join('\n')}`
+      : 'the archives deny everything.',
+  ));
+}
+
+async function quoteCommand(i: ChatInputCommandInteraction, guild: string) {
+  const sub = i.options.getSubcommand();
+  if (sub === 'add') {
+    const user = i.options.getUser('user', true);
+    ensureUser(guild, user);
+    const content = i.options.getString('text', true);
+    db.prepare(
+      'INSERT INTO quotes(guild_id,quoted_user_id,added_by_id,content,created_at) VALUES(?,?,?,?,?)',
+    ).run(guild, user.id, i.user.id, content, now());
+    addMemory(guild, user.id, `said "${content}"`, 'quote', 7);
+    return void (await i.reply(`"${content}"\n- **${user.displayName}**, archived forever`));
+  }
+  if (sub === 'search') {
+    const q = `%${i.options.getString('query', true)}%`;
+    const rows = db
+      .prepare(
+        'SELECT * FROM quotes WHERE guild_id=? AND content LIKE ? ORDER BY score DESC,created_at DESC LIMIT 8',
+      )
+      .all(guild, q) as any[];
+    return void (await i.reply(
+      rows.length
+        ? `**Quote Search**\n${rows.map((r) => `"${r.content}" - ${nameOf(guild, r.quoted_user_id)}`).join('\n')}`
+        : 'the quote vault produced nothing but dust.',
+    ));
+  }
+  const user = sub === 'user' ? i.options.getUser('member', true) : null;
+  return void (await i.reply(randomQuote(guild, user?.id)));
+}
+
+function randomQuote(guild: string, userId?: string) {
+  const row = db
+    .prepare(
+      `SELECT * FROM quotes WHERE guild_id=? ${userId ? 'AND quoted_user_id=?' : ''} ORDER BY RANDOM() LIMIT 1`,
+    )
+    .get(guild, ...(userId ? [userId] : [])) as any;
+  return row
+    ? `"${row.content}"\n- **${nameOf(guild, row.quoted_user_id)}**`
+    : 'the quote vault contains only dust and disappointment.';
+}
+function randomLore(guild: string, order: string) {
+  const r = db.prepare(`SELECT * FROM lore WHERE guild_id=? ${order} LIMIT 1`).get(guild) as any;
+  return r
+    ? `**According to archive #${r.id}:**\n${r.content}`
+    : 'the archives are suspiciously empty.';
+}
+function loreList(guild: string, order: string) {
+  const rows = db.prepare(`SELECT * FROM lore WHERE guild_id=? ${order}`).all(guild) as any[];
+  return rows.length
+    ? `**Top Lore**\n${rows.map((r, n) => `${n + 1}. ${r.content}`).join('\n')}`
+    : 'the archives are suspiciously empty.';
+}
+function reputation(guild: string, target: User) {
+  const r = db
+    .prepare('SELECT * FROM reputation WHERE guild_id=? AND user_id=?')
+    .get(guild, target.id) as any;
+  const total =
+    (r?.positive ?? 0) * 3 + (r?.funny ?? 0) * 2 + (r?.activity ?? 0) + (r?.memorable ?? 0) * 4;
+  return `**${target.displayName}'s Community Rating**\n${Math.min(10, 4 + Math.log10(total + 1) * 2).toFixed(1)}/10\nActivity: ${r?.activity ?? 0} | Funny crimes: ${r?.funny ?? 0} | Historic incidents: ${r?.memorable ?? 0}`;
+}
+
+function profile(guild: string, target: User) {
+  const u = db
+    .prepare('SELECT * FROM users WHERE guild_id=? AND id=?')
+    .get(guild, target.id) as any;
+  const mem = db
+    .prepare(
+      'SELECT content FROM memories WHERE guild_id=? AND user_id=? ORDER BY importance DESC LIMIT 4',
+    )
+    .all(guild, target.id) as any[];
+  const games = db
+    .prepare(
+      'SELECT game,activity_count FROM games WHERE guild_id=? AND user_id=? ORDER BY activity_count DESC LIMIT 5',
+    )
+    .all(guild, target.id) as any[];
+  const phrases = db
+    .prepare(
+      'SELECT phrase,count FROM phrases WHERE guild_id=? AND (first_user_id=? OR last_user_id=?) ORDER BY count DESC LIMIT 5',
+    )
+    .all(guild, target.id, target.id) as any[];
+  const vc = db
+    .prepare(
+      'SELECT COALESCE(SUM(duration_seconds),0) seconds,COUNT(*) sessions FROM voice_activity WHERE guild_id=? AND user_id=?',
+    )
+    .get(guild, target.id) as any;
+  const quoteCount = (
+    db
+      .prepare('SELECT COUNT(*) n FROM quotes WHERE guild_id=? AND quoted_user_id=?')
+      .get(guild, target.id) as any
+  ).n;
+  const favoriteChannel = db
+    .prepare(
+      'SELECT channel_id,COUNT(*) n FROM messages WHERE guild_id=? AND user_id=? GROUP BY channel_id ORDER BY n DESC LIMIT 1',
+    )
+    .get(guild, target.id) as any;
+  const hour = db
+    .prepare(
+      "SELECT strftime('%H',created_at) hour,COUNT(*) n FROM messages WHERE guild_id=? AND user_id=? GROUP BY hour ORDER BY n DESC LIMIT 1",
+    )
+    .get(guild, target.id) as any;
+  const achievements = (
+    db
+      .prepare('SELECT COUNT(*) n FROM achievements WHERE guild_id=? AND user_id=?')
+      .get(guild, target.id) as any
+  ).n;
+  return `**${target.displayName}**\n\n**Known For:**\n${mem.length ? mem.map((m) => `${bullet} ${m.content}`).join('\n') : `${bullet} being under active investigation by the lore department`}\n\n**Messages Observed:** ${u?.message_count ?? 0}\n**Favorite Habitat:** ${favoriteChannel?.channel_id ? `<#${favoriteChannel.channel_id}> (${favoriteChannel.n} sightings)` : u?.favorite_channel_id ? `<#${u.favorite_channel_id}>` : 'unknown biome'}\n**Favorite Games:** ${games.length ? games.map((g) => g.game).join(', ') : 'not enough evidence'}\n**Common Phrases:** ${phrases.length ? phrases.map((p) => `"${p.phrase}"`).join(', ') : 'still developing a catchphrase'}\n**Active Hour:** ${hour ? `${hour.hour}:00 UTC` : 'unknown'}\n**VC Time:** ${(vc.seconds / 3600).toFixed(1)}h across ${vc.sessions} sessions\n**Quotes Archived:** ${quoteCount}\n**Achievements:** ${achievements}\n**Reputation:** ${Math.min(10, 4 + Math.log10((u?.message_count ?? 0) + quoteCount * 5 + achievements * 10 + 1) * 2).toFixed(1)}/10\n**Threat Level:** ${(u?.message_count ?? 0) > 1000 || vc.seconds > 36000 ? 'Elevated' : 'Moderate'}`;
+}
+
+function relationList(guild: string, id: string, rivals: boolean) {
+  const rows = db
+    .prepare(
+      `SELECT * FROM relationships WHERE guild_id=? AND (user_a=? OR user_b=?) ORDER BY ${rivals ? 'rivalry+reactions' : 'mentions+replies+messages_together+voice_seconds/600+gaming_together*3'} DESC LIMIT 5`,
+    )
+    .all(guild, id, id) as any[];
+  return `**${rivals ? 'Destined Opposition' : 'Closest Allies'} of ${nameOf(guild, id)}**\n${rows.length ? rows.map((r, n) => `${n + 1}. ${nameOf(guild, r.user_a === id ? r.user_b : r.user_a)} - ${r.mentions + r.replies + r.messages_together} incidents, ${Math.round(r.voice_seconds / 60)} VC min`).join('\n') : 'insufficient social evidence. go bother someone.'}`;
+}
+function gameProfile(guild: string, id: string) {
+  const rows = db
+    .prepare(
+      'SELECT * FROM games WHERE guild_id=? AND user_id=? ORDER BY activity_count DESC LIMIT 8',
+    )
+    .all(guild, id) as any[];
+  return `**${nameOf(guild, id)}'s Gaming Record**\n${rows.length ? rows.map((r) => `${bullet} ${r.game}: spotted ${r.activity_count} times`).join('\n') : 'no games detected. stealth gamer or grass toucher?'}`;
+}
+function gameStats(guild: string) {
+  const rows = db
+    .prepare(
+      'SELECT game,SUM(activity_count) activity,COUNT(*) players FROM games WHERE guild_id=? GROUP BY game ORDER BY activity DESC LIMIT 10',
+    )
+    .all(guild) as any[];
+  return `**Server Gaming Census**\n${rows.length ? rows.map((r, n) => `${n + 1}. ${r.game} - ${r.players} players, ${r.activity} sightings`).join('\n') : 'everyone has activity hidden. cowards.'}`;
+}
+async function party(i: ChatInputCommandInteraction, guild: string) {
+  const game = i.options.getString('game', true);
+  const rows = db
+    .prepare(
+      'SELECT user_id FROM games WHERE guild_id=? AND lower(game) LIKE lower(?) ORDER BY activity_count DESC LIMIT 10',
+    )
+    .all(guild, `%${game}%`) as any[];
+  await i.reply(
+    rows.length
+      ? `**Party call: ${game}**\n${rows.map((r) => `<@${r.user_id}>`).join(' ')}\nassemble, make questionable decisions.`
+      : `no known ${game} victims. pioneer the suffering yourself.`,
+  );
+}
+function vcStats(guild: string, id: string) {
+  const r = db
+    .prepare(
+      'SELECT COUNT(*) sessions,COALESCE(SUM(duration_seconds),0) seconds,MAX(duration_seconds) longest FROM voice_activity WHERE guild_id=? AND user_id=?',
+    )
+    .get(guild, id) as any;
+  return `**${nameOf(guild, id)}'s VC Record**\nSessions: ${r.sessions}\nTotal: ${(r.seconds / 3600).toFixed(1)} hours\nLongest: ${Math.round((r.longest ?? 0) / 60)} minutes`;
+}
+function voiceLegends(guild: string) {
+  const rows = db
+    .prepare(
+      'SELECT user_id,SUM(duration_seconds) seconds FROM voice_activity WHERE guild_id=? GROUP BY user_id ORDER BY seconds DESC LIMIT 10',
+    )
+    .all(guild) as any[];
+  return `**Voice Goblin Rankings**\n${rows.length ? rows.map((r, n) => `${n + 1}. ${nameOf(guild, r.user_id)} - ${(r.seconds / 3600).toFixed(1)}h`).join('\n') : 'the voice channels remain mercifully undocumented.'}`;
+}
+function onThisDay(guild: string) {
+  const md = new Date().toISOString().slice(5, 10);
+  const r = db
+    .prepare(
+      'SELECT * FROM lore WHERE guild_id=? AND substr(created_at,6,5)=? ORDER BY created_at ASC LIMIT 1',
+    )
+    .get(guild, md) as any;
+  return r
+    ? `**On this day, ${r.created_at.slice(0, 4)}:**\n${r.content}\n\nthe prophecy remains relevant.`
+    : 'nothing recorded on this day. suspicious.';
+}
+function patchNotes(guild: string) {
+  const users = db
+    .prepare('SELECT display_name FROM users WHERE guild_id=? ORDER BY RANDOM() LIMIT 4')
+    .all(guild) as any[];
+  const stats = ['confidence', 'sarcasm', 'sleep schedule', 'queue discipline'];
+  return `**NPC Patch ${new Date().getMonth() + 1}.${new Date().getDate()}**\n${users.map((u, n) => `${bullet} ${u.display_name} ${stats[n % stats.length]} ${n % 2 ? 'increased' : 'reduced'} by ${7 + n * 6}%.`).join('\n') || `${bullet} Player balance unchanged due to lack of evidence.`}\n${bullet} Ranked suffering remains working as intended.`;
+}
+function todayQuest(guild: string) {
+  const date = new Date().toLocaleDateString('en-CA');
+  let q = db.prepare('SELECT * FROM quests WHERE guild_id=? AND date=?').get(guild, date) as any;
+  if (!q) {
+    const pool = [
+      ['Cross-Party Play', 'Play something with a person you rarely queue with.'],
+      ['Clip Tax', 'Share one clip worthy of public judgment.'],
+      ['The Summoning', 'Get three people into VC at once.'],
+      ['Local Comedian', 'Make the chat laugh without using a stolen meme.'],
+    ];
+    const selected = pool[Math.floor(Math.random() * pool.length)]!;
+    db.prepare(
+      'INSERT OR IGNORE INTO quests(guild_id,date,title,description,reward) VALUES(?,?,?,?,?)',
+    ).run(guild, date, selected[0], selected[1], 'dubious honor + 50 imaginary XP');
+    q = { title: selected[0], description: selected[1], reward: 'dubious honor + 50 imaginary XP' };
+  }
+  return `**Daily Quest: ${q.title}**\n${q.description}\n\nReward: ${q.reward}`;
+}
+function achievementList(guild: string, id: string) {
+  const rows = db
+    .prepare(
+      'SELECT * FROM achievements WHERE guild_id=? AND user_id=? ORDER BY unlocked_at DESC LIMIT 15',
+    )
+    .all(guild, id) as any[];
+  return `**${nameOf(guild, id)}'s Achievements**\n${rows.length ? rows.map((r) => `${bullet} **${r.name}** - ${r.description}`).join('\n') : 'nothing unlocked yet. the character arc begins now.'}`;
+}
+function legendBoard(guild: string) {
+  const active = db
+    .prepare(
+      'SELECT display_name,message_count,id FROM users WHERE guild_id=? ORDER BY message_count DESC LIMIT 5',
+    )
+    .all(guild) as any[];
+  const night = db
+    .prepare(
+      "SELECT u.display_name,COUNT(*) n FROM messages m JOIN users u ON u.id=m.user_id WHERE m.guild_id=? AND CAST(strftime('%H',m.created_at) AS INTEGER) BETWEEN 0 AND 5 GROUP BY m.user_id ORDER BY n DESC LIMIT 1",
+    )
+    .get(guild) as any;
+  const loreMaster = db
+    .prepare(
+      'SELECT u.display_name,COUNT(*) n FROM lore l JOIN users u ON u.id=l.author_id WHERE l.guild_id=? GROUP BY author_id ORDER BY n DESC LIMIT 1',
+    )
+    .get(guild) as any;
+  const hunter = db
+    .prepare(
+      'SELECT u.display_name,COUNT(*) n FROM achievements a JOIN users u ON u.id=a.user_id WHERE a.guild_id=? GROUP BY user_id ORDER BY n DESC LIMIT 1',
+    )
+    .get(guild) as any;
+  return `**Server Legends**\n${active.map((u, n) => `${['Serial Yapper', 'Most Active', 'Most Chaotic', 'Lore Suspect', 'Touch Grass Contender'][n]} - **${u.display_name}**`).join('\n') || 'No legends yet. only mysterious silhouettes.'}${night ? `\nNight Owl - **${night.display_name}**` : ''}${loreMaster ? `\nLore Master - **${loreMaster.display_name}**` : ''}${hunter ? `\nAchievement Hunter - **${hunter.display_name}**` : ''}`;
+}
+async function analyze(i: ChatInputCommandInteraction) {
+  const file = i.options.getAttachment('file', true);
+  const seed = [...file.name].reduce((a, c) => a + c.charCodeAt(0), file.size) % 101;
+  const image = file.contentType?.startsWith('image');
+  await i.reply(
+    image
+      ? `**Meme Tribunal**\nMeme Rating: ${seed}/100\nBrain Damage Score: ${Math.min(100, seed + 17)}%\nBoomer Compatibility: ${100 - seed}%\nDiscord Worthiness: ${seed > 55 ? 'Certified' : 'Questionable'}`
+      : `**Clip Review**\nSkill: ${seed}%\nLuck: ${100 - seed}%\nEnemy Team Mental Damage: ${seed > 65 ? 'Critical' : 'Recoverable'}\nVerdict: ${seed > 70 ? 'calculated, allegedly' : 'the replay department has concerns'}`,
+  );
+}
+
+function messagesSince(guild: string, since: string, limit = 120) {
+  return db
+    .prepare(
+      `SELECT m.content,u.display_name FROM messages m LEFT JOIN users u ON u.id=m.user_id WHERE m.guild_id=? AND m.created_at>? ORDER BY m.created_at DESC LIMIT ?`,
+    )
+    .all(guild, since, limit)
+    .reverse() as any[];
+}
+async function summarizeCommand(i: ChatInputCommandInteraction, guild: string) {
+  await i.deferReply();
+  const amount = i.options.getString('amount') ?? '50';
+  const since =
+    amount === 'today'
+      ? new Date(new Date().setHours(0, 0, 0, 0)).toISOString()
+      : '1970-01-01T00:00:00.000Z';
+  const limit = amount === 'today' ? 150 : Number(amount);
+  const rows =
+    amount === 'today'
+      ? messagesSince(guild, since, limit)
+      : (db
+          .prepare(
+            `SELECT m.content,u.display_name FROM messages m LEFT JOIN users u ON u.id=m.user_id WHERE m.guild_id=? AND m.channel_id=? ORDER BY m.created_at DESC LIMIT ?`,
+          )
+          .all(guild, i.channelId, limit)
+          .reverse() as any[]);
+  if (!rows.length) return void (await i.editReply('nothing to summarize. the void is concise.'));
+  const text = rows
+    .map((r) => `${r.display_name}: ${r.content}`)
+    .join('\n')
+    .slice(-9000);
+  const out = await complete([
+    {
+      role: 'system',
+      content:
+        'Summarize Discord chat as NPC: concise, witty, factual. Include sections: Main Topic, Summary, Key Participants, Important Decisions, Funniest Moment, Server Mood. Do not invent.',
+    },
+    { role: 'user', content: text },
+  ]);
+  await i.editReply(out);
+}
+async function catchup(i: ChatInputCommandInteraction, guild: string) {
+  const state = db
+    .prepare('SELECT last_catchup_at FROM user_state WHERE guild_id=? AND user_id=?')
+    .get(guild, i.user.id) as any;
+  const since = state?.last_catchup_at ?? new Date(Date.now() - 24 * 3600_000).toISOString();
+  db.prepare(
+    `INSERT INTO user_state(guild_id,user_id,last_catchup_at) VALUES(?,?,?) ON CONFLICT(guild_id,user_id) DO UPDATE SET last_catchup_at=excluded.last_catchup_at`,
+  ).run(guild, i.user.id, now());
+  await recapFromSince(i, guild, since, 'While you were gone');
+}
+async function recapCommand(i: ChatInputCommandInteraction, guild: string, period: string) {
+  const days = period === 'month' ? 30 : period === 'week' ? 7 : 1;
+  await recapFromSince(
+    i,
+    guild,
+    new Date(Date.now() - days * 86400_000).toISOString(),
+    `Recap: ${period}`,
+  );
+}
+async function recapFromSince(
+  i: ChatInputCommandInteraction,
+  guild: string,
+  since: string,
+  title: string,
+) {
+  const lore = (
+    db
+      .prepare('SELECT COUNT(*) n FROM lore WHERE guild_id=? AND created_at>?')
+      .get(guild, since) as any
+  ).n;
+  const achievements = (
+    db
+      .prepare('SELECT COUNT(*) n FROM achievements WHERE guild_id=? AND unlocked_at>?')
+      .get(guild, since) as any
+  ).n;
+  const quotes = (
+    db
+      .prepare('SELECT COUNT(*) n FROM quotes WHERE guild_id=? AND created_at>?')
+      .get(guild, since) as any
+  ).n;
+  const active = db
+    .prepare(
+      'SELECT u.display_name,COUNT(*) n FROM messages m JOIN users u ON u.id=m.user_id WHERE m.guild_id=? AND m.created_at>? GROUP BY m.user_id ORDER BY n DESC LIMIT 3',
+    )
+    .all(guild, since) as any[];
+  await i.reply(
+    `**${title}**\n${bullet} ${lore} lore events occurred\n${bullet} ${achievements} achievements were earned\n${bullet} ${quotes} quotes were archived\n${active.length ? `${bullet} Top yappers: ${active.map((a) => `${a.display_name} (${a.n})`).join(', ')}` : `${bullet} Chat activity was suspiciously quiet`}\n${bullet} Nobody has been cleared of wrongdoing.`,
+  );
+}
+function trending(guild: string) {
+  const since = new Date(Date.now() - 24 * 3600_000).toISOString();
+  const games = db
+    .prepare(
+      'SELECT game,SUM(activity_count) n FROM games WHERE guild_id=? GROUP BY game ORDER BY n DESC LIMIT 5',
+    )
+    .all(guild) as any[];
+  const phrases = db
+    .prepare(
+      'SELECT phrase,count FROM phrases WHERE guild_id=? AND last_seen>? AND length(phrase)>5 ORDER BY count DESC LIMIT 8',
+    )
+    .all(guild, since) as any[];
+  const users = db
+    .prepare(
+      'SELECT u.display_name,COUNT(*) n FROM messages m JOIN users u ON u.id=m.user_id WHERE m.guild_id=? AND m.created_at>? GROUP BY m.user_id ORDER BY n DESC LIMIT 5',
+    )
+    .all(guild, since) as any[];
+  return `**Trending Right Now**\n**Games:** ${games.length ? games.map((g) => `${g.game} (${g.n})`).join(', ') : 'no game telemetry'}\n**Topics/Phrases:** ${phrases.length ? phrases.map((p) => `"${p.phrase}"`).join(', ') : 'the bit economy is slow'}\n**Active Users:** ${users.length ? users.map((u) => `${u.display_name} (${u.n})`).join(', ') : 'no witnesses'}\n**Hottest Conversation:** probably whatever everyone will deny later.`;
+}
+async function journal(i: ChatInputCommandInteraction, guild: string) {
+  await i.deferReply();
+  const since = new Date(Date.now() - 24 * 3600_000).toISOString();
+  const rows = messagesSince(guild, since, 80);
+  const lore = db
+    .prepare(
+      'SELECT content FROM lore WHERE guild_id=? AND created_at>? ORDER BY importance DESC LIMIT 5',
+    )
+    .all(guild, since) as any[];
+  const prompt = `Recent chat:\n${rows
+    .map((r) => `${r.display_name}: ${r.content}`)
+    .join('\n')
+    .slice(-7000)}\nLore:\n${lore.map((l) => l.content).join('\n')}`;
+  const entry = await complete([
+    {
+      role: 'system',
+      content:
+        'Write a short NPC diary entry as a sleep-deprived witty Discord server resident. Reference real events only. Format starts with Dear Diary,',
+    },
+    { role: 'user', content: prompt || 'Quiet day.' },
+  ]);
+  db.prepare(
+    'INSERT INTO npc_journal(guild_id,content,period_start,created_at) VALUES(?,?,?,?)',
+  ).run(guild, entry, since, now());
+  await i.editReply(entry);
+}
+
+export async function autocomplete(i: AutocompleteInteraction) {
+  if (i.commandName !== 'party') return;
+  const value = String(i.options.getFocused()).toLowerCase();
+  const rows = db
+    .prepare('SELECT DISTINCT game FROM games WHERE guild_id=? AND lower(game) LIKE ? LIMIT 20')
+    .all(i.guildId, `%${value}%`) as any[];
+  const fallback = [
+    'Valorant',
+    'League of Legends',
+    'CS2',
+    'Minecraft',
+    'Elden Ring',
+    'Story Games',
+  ].filter((game) => game.toLowerCase().includes(value));
+  await i.respond(
+    [
+      ...rows.map((r) => ({ name: r.game, value: r.game })),
+      ...fallback.map((game) => ({ name: game, value: game })),
+    ].slice(0, 25),
+  );
+}
