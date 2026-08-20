@@ -39,6 +39,7 @@ export function attachDiscordEvents(client: Client) {
     }
     try {
       recordMessage(message);
+      recordDiscussedUsers(message);
       evaluateAchievements(message.guildId, message.author.id);
       learnExplicitMemory(message);
       await detectInsideJoke(message);
@@ -64,13 +65,16 @@ export function attachDiscordEvents(client: Client) {
         .replace(client.user ? new RegExp(`<@!?${client.user.id}>`, 'g') : /$^/, '')
         .trim();
       const context = relevantContext(message.guildId, message.author.id, prompt);
+      const ownerPriority = config.OWNER_USER_IDS.includes(message.author.id)
+        ? '\nThe speaker is a bot owner. Give their request highest conversational priority, listen carefully, and be especially respectful while remaining natural.'
+        : '';
       const mood = currentMood(message.guildId);
       const scope = `${message.guildId}:${message.channelId}`;
       const repetitionContext = recentReplies(scope);
       const response = await uniqueCompletion(scope, [
         {
           role: 'system',
-          content: `${systemPrompt(mood, context)}\nRecent NPC replies you must not repeat or closely imitate:\n${repetitionContext.map((r) => `- ${r}`).join('\n') || '- none yet'}`,
+          content: `${systemPrompt(mood, context)}${ownerPriority}\nRecent NPC replies you must not repeat or closely imitate:\n${repetitionContext.map((r) => `- ${r}`).join('\n') || '- none yet'}`,
         },
         ...conversation(message.guildId, message.channelId, 20, 6500),
         {
@@ -130,6 +134,30 @@ export function attachDiscordEvents(client: Client) {
       logger.warn({ error }, 'Reaction tracking failed');
     }
   });
+}
+
+function recordDiscussedUsers(message: Message<true>) {
+  if (message.content.length < 12) return;
+  const text = message.content.toLocaleLowerCase();
+  const seen = new Set<string>();
+  for (const member of message.guild.members.cache.values()) {
+    if (member.user.bot || member.id === message.author.id || seen.has(member.id)) continue;
+    const names = [member.displayName, member.user.username].filter((name) => name.length >= 3);
+    if (!names.some((name) => new RegExp(`(^|\\W)${escapeRegex(name)}(?=\\W|$)`, 'i').test(text)))
+      continue;
+    seen.add(member.id);
+    addMemory(
+      message.guildId,
+      member.id,
+      `${message.author.displayName} discussed ${member.displayName}: “${message.content}”`,
+      'discussion',
+      3,
+    );
+  }
+}
+
+function escapeRegex(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function ensureObservedUser(

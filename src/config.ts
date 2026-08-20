@@ -23,7 +23,15 @@ const schema = z.object({
   LOG_LEVEL: z.string().default('info'),
   NPC_SPONTANEOUS_CHANCE: z.coerce.number().min(0).max(0.1).default(0.004),
   SOLITUDE_CHANNEL_ID: z.string().default('1482086962348429404'),
-  OWNER_USER_ID: z.string().optional(),
+  OWNER_USER_IDS: z
+    .string()
+    .default('483123004734177292,682288992456409096')
+    .transform((value) =>
+      value
+        .split(',')
+        .map((id) => id.trim())
+        .filter(Boolean),
+    ),
 });
 
 export const config = schema.parse(process.env);

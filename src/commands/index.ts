@@ -940,7 +940,7 @@ function relationshipCard(guild: string, a: User, b: User) {
 }
 
 async function deployCommand(i: ChatInputCommandInteraction, action: 'pull' | 'restart') {
-  if (!config.OWNER_USER_ID || i.user.id !== config.OWNER_USER_ID)
+  if (!config.OWNER_USER_IDS.includes(i.user.id))
     return void (await i.reply({
       content: 'owner controls are sealed.',
       flags: MessageFlags.Ephemeral,
