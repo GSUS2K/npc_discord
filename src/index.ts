@@ -4,7 +4,6 @@ import './database/index.js';
 import { startDashboard } from './dashboard/index.js';
 import { attachDiscordEvents } from './events/discord.js';
 import { logger } from './logger.js';
-import { startScheduler } from './scheduler.js';
 
 const client = new Client({
   intents: [
@@ -27,7 +26,6 @@ client.once(Events.ClientReady, (ready) => {
     'NPC has entered the server',
   );
   ready.user.setActivity('the server lore accumulate');
-  startScheduler(client);
 });
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const)

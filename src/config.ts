@@ -22,6 +22,7 @@ const schema = z.object({
   TIMEZONE: z.string().default('Asia/Kolkata'),
   LOG_LEVEL: z.string().default('info'),
   NPC_SPONTANEOUS_CHANCE: z.coerce.number().min(0).max(0.1).default(0.004),
+  SOLITUDE_CHANNEL_ID: z.string().default('1482086962348429404'),
 });
 
 export const config = schema.parse(process.env);

@@ -31,11 +31,15 @@ export function attachDiscordEvents(client: Client) {
   });
 
   client.on(Events.MessageCreate, async (message) => {
-    if (!message.inGuild() || message.author.bot) return;
+    if (!message.inGuild()) return;
+    // Keep NPC's own messages in the archive, but never let bot messages trigger replies.
+    if (message.author.bot) {
+      if (client.user && message.author.id === client.user.id) recordMessage(message);
+      return;
+    }
     try {
       recordMessage(message);
-      const unlocks = evaluateAchievements(message.guildId, message.author.id);
-      if (unlocks.length) await message.react('🏆').catch(() => undefined);
+      evaluateAchievements(message.guildId, message.author.id);
       learnExplicitMemory(message);
       await detectInsideJoke(message);
       detectQuoteWorthy(message);
@@ -48,9 +52,13 @@ export function attachDiscordEvents(client: Client) {
         return;
       }
       const mentioned = client.user ? message.mentions.has(client.user) : false;
-      const spontaneous =
-        Math.random() < config.NPC_SPONTANEOUS_CHANCE && message.content.length > 20;
-      if (!mentioned && !spontaneous) return;
+      const repliedToNpc =
+        message.reference?.messageId !== undefined &&
+        message.mentions.repliedUser?.id === client.user?.id;
+      const solitude = message.channelId === config.SOLITUDE_CHANNEL_ID;
+      // NPC is silent elsewhere unless directly mentioned/replied to. Solitude is the one
+      // channel where it participates in every human message, like a live conversation.
+      if (!mentioned && !repliedToNpc && !solitude) return;
       await message.channel.sendTyping();
       const prompt = message.content
         .replace(client.user ? new RegExp(`<@!?${client.user.id}>`, 'g') : /$^/, '')
