@@ -6,6 +6,7 @@ import {
   type User,
 } from 'discord.js';
 import { execFile } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
 import { promisify } from 'node:util';
 import { complete } from '../ai/providers.js';
 import { config } from '../config.js';
@@ -213,6 +214,12 @@ const simpleCommands = [
   new SlashCommandBuilder()
     .setName('activity-stats')
     .setDescription('See server-wide game, music, and activity statistics'),
+  new SlashCommandBuilder()
+    .setName('status')
+    .setDescription('Check whether NPC is healthy and online'),
+  new SlashCommandBuilder()
+    .setName('info')
+    .setDescription('Show NPC hosting, AI, database, and server information'),
 ];
 
 export const commandData = [lore, quote, ...simpleCommands];
@@ -348,6 +355,10 @@ export async function executeCommand(i: ChatInputCommandInteraction) {
       return void (await i.reply(activityCard(guild, target)));
     case 'activity-stats':
       return void (await i.reply(activityStats(guild)));
+    case 'status':
+      return void (await i.reply(statusCard(guild)));
+    case 'info':
+      return void (await i.reply(infoCard(guild)));
   }
 }
 
@@ -1011,6 +1022,30 @@ function activityStats(guild: string) {
   return `**Server Activity Census**\n**Live statuses:** ${statuses.length ? statuses.map((s) => `${s.status}: ${s.users}`).join(' · ') : 'no live presence data'}\n\n**Games/apps by recorded time:** ${games.length ? games.map((g) => `${g.name} — ${formatDuration(g.seconds)} (${g.users} users)`).join('\n') : 'no games recorded'}\n\n**Music currently/recently exposed:** ${music.length ? music.map((m) => `${m.track}${m.artist ? ` — ${m.artist}` : ''} (${m.listeners} listeners)`).join('\n') : 'no music activity recorded'}`;
 }
 
+function statusCard(guild: string) {
+  const mem = process.memoryUsage();
+  const live = db
+    .prepare(
+      'SELECT COUNT(DISTINCT user_id) users FROM presence_sessions WHERE guild_id=? AND ended_at IS NULL AND last_seen>?',
+    )
+    .get(guild, new Date(Date.now() - 10 * 60_000).toISOString()) as any;
+  return `**NPC Status**\n🟢 Online and responding\nUptime: ${formatDuration(Math.floor(process.uptime()))}\nMemory: ${(mem.rss / 1024 / 1024).toFixed(0)} MB RSS\nGuilds connected: ${process.env.DISCORD_GUILD_ID ? 1 : 'multiple/unknown'}\nLive activity records: ${live.users}`;
+}
+
+function infoCard(guild: string) {
+  const tables = (
+    db.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE type='table'").get() as any
+  ).n;
+  const providers =
+    [
+      config.GROQ_API_KEY ? `Groq (${config.GROQ_MODEL})` : '',
+      config.OPENROUTER_API_KEY ? `OpenRouter (${config.OPENROUTER_MODEL})` : '',
+    ]
+      .filter(Boolean)
+      .join(' + ') || 'offline fallback';
+  return `**NPC Information**\nHost: ${process.platform} / Node ${process.version}\nDatabase: SQLite (${tables} tables)\nAI providers: ${providers}\nConnected guilds: ${process.env.DISCORD_GUILD_ID ? 1 : 'multiple'}\nThis server: ${guild}\nCommands registered in this build: ${commandData.length}`;
+}
+
 async function deployCommand(i: ChatInputCommandInteraction, action: 'pull' | 'restart') {
   if (!config.OWNER_USER_IDS.includes(i.user.id))
     return void (await i.reply({
@@ -1027,7 +1062,13 @@ async function deployCommand(i: ChatInputCommandInteraction, action: 'pull' | 'r
         `pull/build/register complete.\n\`\`\`\n${`${pull.stdout}${build.stdout}${register.stdout}`.slice(-1500)}\n\`\`\``,
       ));
     }
-    await i.editReply('restart requested. I will be back in a few seconds.');
+    writeFileSync(
+      './data/restart-notice.json',
+      JSON.stringify({ channelId: i.channelId, userId: i.user.id }),
+    );
+    await i.editReply(
+      'restart requested. I will send a confirmation here when the process is back online.',
+    );
     setTimeout(() => void run('pm2', ['restart', 'npc'], { cwd: process.cwd() }), 500);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
