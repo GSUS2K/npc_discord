@@ -1,6 +1,10 @@
 import {
   type AutocompleteInteraction,
   ChatInputCommandInteraction,
+  ButtonInteraction,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   MessageFlags,
   SlashCommandBuilder,
   type TextChannel,
@@ -240,6 +244,31 @@ const simpleCommands = [
     .addUserOption((o) => o.setName('user').setDescription('Invite a member'))
     .addUserOption((o) => o.setName('other').setDescription('Invite another member')),
   new SlashCommandBuilder()
+    .setName('stats')
+    .setDescription('Browse your server statistics by period and category')
+    .addStringOption((o) =>
+      o
+        .setName('period')
+        .setDescription('Time range')
+        .addChoices(
+          { name: 'This week', value: 'week' },
+          { name: 'This month', value: 'month' },
+          { name: 'All time', value: 'all' },
+        ),
+    )
+    .addStringOption((o) =>
+      o
+        .setName('category')
+        .setDescription('What to inspect')
+        .addChoices(
+          { name: 'Everything', value: 'all' },
+          { name: 'Messages', value: 'messages' },
+          { name: 'Games', value: 'games' },
+          { name: 'Music', value: 'music' },
+          { name: 'Voice', value: 'voice' },
+        ),
+    ),
+  new SlashCommandBuilder()
     .setName('preferences')
     .setDescription('Customize how NPC replies to you')
     .addSubcommand((s) =>
@@ -405,6 +434,8 @@ export async function executeCommand(i: ChatInputCommandInteraction) {
       return void (await i.reply(infoCard(guild)));
     case 'npc-thread':
       return createNpcThread(i);
+    case 'stats':
+      return statsCommand(i, guild);
     case 'preferences':
       return preferencesCommand(i, guild);
   }
@@ -1115,6 +1146,162 @@ async function createNpcThread(i: ChatInputCommandInteraction) {
     `NPC discussion opened by <@${i.user.id}>. Topic: **${topic}**\nEveryone in this thread can talk normally; I’ll follow the conversation here.`,
   );
   await i.reply({ content: `thread created: <#${thread.id}>`, flags: MessageFlags.Ephemeral });
+}
+
+type StatsPeriod = 'week' | 'month' | 'all';
+type StatsCategory = 'all' | 'messages' | 'games' | 'music' | 'voice';
+function periodBounds(period: StatsPeriod, offset: number) {
+  if (period === 'all')
+    return {
+      start: '1970-01-01T00:00:00.000Z',
+      end: new Date(Date.now() + 86400000).toISOString(),
+      label: 'All time',
+    };
+  const end = new Date();
+  if (period === 'week') {
+    const day = end.getUTCDay() || 7;
+    end.setUTCDate(end.getUTCDate() - day + 1 + (offset + 1) * 7);
+  } else {
+    end.setUTCDate(1);
+    end.setUTCMonth(end.getUTCMonth() + offset + 1);
+  }
+  const start = new Date(end);
+  if (period === 'week') start.setUTCDate(start.getUTCDate() - 7);
+  else start.setUTCMonth(start.getUTCMonth() - 1);
+  return {
+    start: start.toISOString(),
+    end: end.toISOString(),
+    label:
+      period === 'week'
+        ? `${start.toISOString().slice(0, 10)} → ${new Date(end.getTime() - 1).toISOString().slice(0, 10)}`
+        : `${start.toISOString().slice(0, 7)}`,
+  };
+}
+
+function statsText(
+  guild: string,
+  userId: string,
+  period: StatsPeriod,
+  category: StatsCategory,
+  offset = 0,
+) {
+  const bounds = periodBounds(period, offset);
+  const messages = (
+    db
+      .prepare(
+        'SELECT COUNT(*) n FROM messages WHERE guild_id=? AND user_id=? AND created_at>=? AND created_at<?',
+      )
+      .get(guild, userId, bounds.start, bounds.end) as any
+  ).n;
+  const voice = (
+    db
+      .prepare(
+        'SELECT COALESCE(SUM(duration_seconds),0) seconds FROM voice_activity WHERE guild_id=? AND user_id=? AND joined_at>=? AND joined_at<?',
+      )
+      .get(guild, userId, bounds.start, bounds.end) as any
+  ).seconds;
+  const games = db
+    .prepare(
+      'SELECT game,activity_count FROM games WHERE guild_id=? AND user_id=? ORDER BY activity_count DESC LIMIT 5',
+    )
+    .all(guild, userId) as any[];
+  const activity = db
+    .prepare(
+      'SELECT activity_name,SUM(duration_seconds) seconds FROM presence_sessions WHERE guild_id=? AND user_id=? AND last_seen>=? AND last_seen<? GROUP BY activity_name ORDER BY seconds DESC LIMIT 5',
+    )
+    .all(guild, userId, bounds.start, bounds.end) as any[];
+  const music = db
+    .prepare(
+      'SELECT music_track,music_artist,SUM(duration_seconds) seconds FROM presence_sessions WHERE guild_id=? AND user_id=? AND music_track IS NOT NULL AND last_seen>=? AND last_seen<? GROUP BY music_track,music_artist ORDER BY seconds DESC LIMIT 5',
+    )
+    .all(guild, userId, bounds.start, bounds.end) as any[];
+  const lines = [
+    `**${nameOf(guild, userId)} — ${bounds.label} Stats**`,
+    `Messages: ${messages}`,
+    `Voice time: ${formatDuration(voice)}`,
+  ];
+  if (category === 'all' || category === 'games')
+    lines.push(
+      `**Games:** ${games.length ? games.map((g) => `${g.game} (${g.activity_count} sightings)`).join(', ') : 'none recorded'}`,
+    );
+  if (category === 'all' || category === 'music')
+    lines.push(
+      `**Music:** ${music.length ? music.map((m) => `${m.music_track}${m.music_artist ? ` — ${m.music_artist}` : ''} (${formatDuration(m.seconds)})`).join(', ') : 'none exposed'}`,
+    );
+  if (category === 'all')
+    lines.push(
+      `**Activity time:** ${activity.length ? activity.map((a) => `${a.activity_name} (${formatDuration(a.seconds)})`).join(', ') : 'none recorded'}`,
+    );
+  if (category === 'all' || category === 'voice') lines.push(`**Voice:** ${formatDuration(voice)}`);
+  const previous = period === 'all' ? null : periodBounds(period, offset - 1);
+  if (previous) {
+    const old = (
+      db
+        .prepare(
+          'SELECT COUNT(*) n FROM messages WHERE guild_id=? AND user_id=? AND created_at>=? AND created_at<?',
+        )
+        .get(guild, userId, previous.start, previous.end) as any
+    ).n;
+    lines.push(
+      `Compared with previous period: ${messages - old >= 0 ? '+' : ''}${messages - old} messages.`,
+    );
+  }
+  return lines.join('\n');
+}
+
+async function statsCommand(i: ChatInputCommandInteraction, guild: string) {
+  const period = (i.options.getString('period') ?? 'week') as StatsPeriod;
+  const category = (i.options.getString('category') ?? 'all') as StatsCategory;
+  await i.reply(statsText(guild, i.user.id, period, category));
+  await i.editReply({
+    content: statsText(guild, i.user.id, period, category),
+    components: statsButtons(i.user.id, period, category, 0),
+  });
+}
+
+function statsButtons(
+  userId: string,
+  period: StatsPeriod,
+  category: StatsCategory,
+  offset: number,
+) {
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`stats|${userId}|${period}|${category}|${offset - 1}`)
+        .setLabel('← Older')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(`stats|${userId}|${period}|${category}|${offset + 1}`)
+        .setLabel('Newer →')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(offset >= 0),
+    ),
+  ];
+}
+
+export async function handleStatsButton(i: ButtonInteraction) {
+  const [kind, userId, period, category, offsetText] = i.customId.split('|');
+  if (kind !== 'stats' || userId !== i.user.id)
+    return void (await i.reply({
+      content: 'that stats panel belongs to someone else.',
+      flags: MessageFlags.Ephemeral,
+    }));
+  await i.update({
+    content: statsText(
+      i.guildId!,
+      userId,
+      period as StatsPeriod,
+      category as StatsCategory,
+      Number(offsetText),
+    ),
+    components: statsButtons(
+      userId,
+      period as StatsPeriod,
+      category as StatsCategory,
+      Number(offsetText),
+    ),
+  });
 }
 
 async function preferencesCommand(i: ChatInputCommandInteraction, guild: string) {

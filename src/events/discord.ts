@@ -7,13 +7,15 @@ import { db, now } from '../database/index.js';
 import { logger } from '../logger.js';
 import { addMemory, conversation, recordMessage, relevantContext } from '../memory/service.js';
 import { evaluateAchievements, unlock } from '../achievements/service.js';
-import { autocomplete, executeCommand } from '../commands/index.js';
+import { autocomplete, executeCommand, handleStatsButton } from '../commands/index.js';
 import { getPreferences, savePreferences } from '../preferences.js';
 
 export function attachDiscordEvents(client: Client) {
   client.on(Events.InteractionCreate, async (interaction) => {
     try {
       if (interaction.isAutocomplete()) return void (await autocomplete(interaction));
+      if (interaction.isButton() && interaction.customId.startsWith('stats|'))
+        return void (await handleStatsButton(interaction));
       if (interaction.isChatInputCommand()) await executeCommand(interaction);
     } catch (error) {
       logger.error(
