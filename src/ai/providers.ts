@@ -66,7 +66,11 @@ export async function complete(messages: ChatMessage[]): Promise<string> {
     try {
       return await provider.complete(messages);
     } catch (error) {
-      logger.warn({ provider: provider.name, error }, 'AI provider failed; trying fallback');
+      const detail = error instanceof Error ? { message: error.message, name: error.name } : error;
+      logger.warn(
+        { provider: provider.name, error: detail },
+        'AI provider failed; trying fallback',
+      );
     }
   }
   // Keep the bot useful when an API key is missing, exhausted, or temporarily down.
