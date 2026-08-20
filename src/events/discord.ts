@@ -227,7 +227,7 @@ function recordDiscussedUsers(message: Message<true>) {
     addMemory(
       message.guildId,
       member.id,
-      `${message.author.displayName} discussed ${member.displayName}: “${message.content}”`,
+      `Unverified report: ${message.author.displayName} said about ${member.displayName}: “${message.content}”`,
       'discussion',
       3,
     );
@@ -338,7 +338,14 @@ function currentMood(guildId: string) {
 function learnExplicitMemory(message: Message<true>) {
   const match = message.content.match(/\b(?:remember(?: that)?|for the record)[,:]?\s+(.{8,500})/i);
   if (!match?.[1]) return;
-  addMemory(message.guildId, message.author.id, match[1], 'user-stated', 7);
+  const target = message.mentions.users.first();
+  addMemory(
+    message.guildId,
+    target?.id ?? message.author.id,
+    `User-stated claim from ${message.author.displayName}: ${match[1]}`,
+    'user-stated',
+    7,
+  );
 }
 
 async function detectInsideJoke(message: Message<true>) {
