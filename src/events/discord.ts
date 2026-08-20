@@ -99,15 +99,20 @@ export function attachDiscordEvents(client: Client) {
         },
       ]);
       const chunks = preferences.format === 'multiple' ? splitReply(response) : [response];
+      const first = renderServerAssets(message, chunks[0]!);
       await message.reply({
-        content: chunks[0]!,
+        content: first.content,
+        ...(first.stickers.length ? { stickers: first.stickers } : {}),
         allowedMentions: { repliedUser: false, parse: [] },
       });
-      for (const chunk of chunks.slice(1))
+      for (const chunk of chunks.slice(1)) {
+        const rendered = renderServerAssets(message, chunk);
         await message.channel.send({
-          content: chunk,
+          content: rendered.content,
+          ...(rendered.stickers.length ? { stickers: rendered.stickers } : {}),
           allowedMentions: { parse: [], repliedUser: false },
         });
+      }
     } catch (error) {
       logger.error({ error, messageId: message.id }, 'Message processing failed');
     }
@@ -156,6 +161,29 @@ export function attachDiscordEvents(client: Client) {
       logger.warn({ error }, 'Reaction tracking failed');
     }
   });
+}
+
+function renderServerAssets(message: Message<true>, content: string) {
+  const stickers: string[] = [];
+  const rendered = content
+    .replace(/:sticker:([a-zA-Z0-9_-]+):/g, (_match, name: string) => {
+      const sticker = message.guild.stickers.cache.find(
+        (item) => item.name?.toLowerCase() === name.toLowerCase(),
+      );
+      if (!sticker) return `:sticker:${name}:`;
+      stickers.push(sticker.id);
+      return '';
+    })
+    .replace(/:([a-zA-Z0-9_~-]+):/g, (match, name: string) => {
+      const emoji = message.guild.emojis.cache.find(
+        (item) => item.name?.toLowerCase() === name.toLowerCase(),
+      );
+      if (!emoji) return match;
+      return emoji.animated ? `<a:${emoji.name}:${emoji.id}>` : `<:${emoji.name}:${emoji.id}>`;
+    })
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  return { content: rendered, stickers };
 }
 
 function isNpcPaused(guildId: string) {
