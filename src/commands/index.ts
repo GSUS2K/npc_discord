@@ -5,9 +5,14 @@ import {
   SlashCommandBuilder,
   type User,
 } from 'discord.js';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { complete } from '../ai/providers.js';
+import { config } from '../config.js';
 import { db, now } from '../database/index.js';
 import { addMemory } from '../memory/service.js';
+
+const run = promisify(execFile);
 
 const lore = new SlashCommandBuilder()
   .setName('lore')
@@ -166,6 +171,38 @@ const simpleCommands = [
     .addAttachmentOption((o) =>
       o.setName('file').setDescription('Clip, image, or meme').setRequired(true),
     ),
+  new SlashCommandBuilder()
+    .setName('npc-duel')
+    .setDescription('NPC judges a debate between two users')
+    .addUserOption((o) => o.setName('user').setDescription('First debater').setRequired(true))
+    .addUserOption((o) => o.setName('other').setDescription('Second debater').setRequired(true)),
+  new SlashCommandBuilder().setName('lore-recap').setDescription('Previously on this server...'),
+  new SlashCommandBuilder().setName('server-mood').setDescription('Read the current server mood'),
+  new SlashCommandBuilder()
+    .setName('fortune')
+    .setDescription('Generate an evidence-based prediction')
+    .addUserOption((o) => o.setName('user').setDescription('Whose fate?')),
+  new SlashCommandBuilder()
+    .setName('quote-battle')
+    .setDescription('Put two archived quotes head-to-head'),
+  new SlashCommandBuilder()
+    .setName('npc-memory')
+    .setDescription('Ask what NPC remembers about someone')
+    .addUserOption((o) => o.setName('user').setDescription('Member')),
+  new SlashCommandBuilder()
+    .setName('case-file')
+    .setDescription('Create a funny evidence-based investigation')
+    .addUserOption((o) => o.setName('user').setDescription('Suspect')),
+  new SlashCommandBuilder().setName('awards').setDescription('Show opt-in server awards'),
+  new SlashCommandBuilder()
+    .setName('relationship')
+    .setDescription("Inspect two users' interaction history")
+    .addUserOption((o) => o.setName('user').setDescription('First member').setRequired(true))
+    .addUserOption((o) => o.setName('other').setDescription('Second member').setRequired(true)),
+  new SlashCommandBuilder()
+    .setName('pull')
+    .setDescription('Owner: pull and build the latest bot code'),
+  new SlashCommandBuilder().setName('restart').setDescription('Owner: restart NPC on the server'),
 ];
 
 export const commandData = [lore, quote, ...simpleCommands];
@@ -268,6 +305,33 @@ export async function executeCommand(i: ChatInputCommandInteraction) {
       return void (await i.reply(achievementList(guild, target.id)));
     case 'analyze':
       return analyze(i);
+    case 'npc-duel':
+      return npcDuel(i, guild);
+    case 'lore-recap':
+      return loreRecap(i, guild);
+    case 'server-mood':
+      return void (await i.reply(serverMood(guild)));
+    case 'fortune':
+      return void (await i.reply(fortune(guild, target)));
+    case 'quote-battle':
+      return void (await i.reply(quoteBattle(guild)));
+    case 'npc-memory':
+      return void (await i.reply(memoryCard(guild, target)));
+    case 'case-file':
+      return void (await i.reply(caseFile(guild, target)));
+    case 'awards':
+      return void (await i.reply(legendBoard(guild)));
+    case 'relationship': {
+      const a = i.options.getUser('user', true),
+        b = i.options.getUser('other', true);
+      ensureUser(guild, a);
+      ensureUser(guild, b);
+      return void (await i.reply(relationshipCard(guild, a, b)));
+    }
+    case 'pull':
+      return deployCommand(i, 'pull');
+    case 'restart':
+      return deployCommand(i, 'restart');
   }
 }
 
@@ -755,6 +819,147 @@ function summarizeInteractions(guild: string, rows: any[]) {
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+async function npcDuel(i: ChatInputCommandInteraction, _guild: string) {
+  const a = i.options.getUser('user', true);
+  const b = i.options.getUser('other', true);
+  const prompt = `Judge a playful, harmless Discord debate between ${a.displayName} and ${b.displayName}. No real accusation; give each a funny strength, a funny weakness, and a winner.`;
+  await i.deferReply();
+  await i.editReply(
+    await complete([
+      {
+        role: 'system',
+        content: 'You are NPC, a witty but kind server referee. Keep it under 180 words.',
+      },
+      { role: 'user', content: prompt },
+    ]),
+  );
+}
+
+async function loreRecap(i: ChatInputCommandInteraction, guild: string) {
+  await i.deferReply();
+  const rows = db
+    .prepare('SELECT content FROM lore WHERE guild_id=? ORDER BY created_at DESC LIMIT 8')
+    .all(guild) as any[];
+  const recent = db
+    .prepare('SELECT content FROM messages WHERE guild_id=? ORDER BY created_at DESC LIMIT 30')
+    .all(guild) as any[];
+  const out = await complete([
+    {
+      role: 'system',
+      content:
+        'Write a short Previously On recap using only supplied server records. Be specific and witty.',
+    },
+    {
+      role: 'user',
+      content: `Lore:\n${rows.map((r) => r.content).join('\n')}\nRecent incidents:\n${recent.map((r) => r.content).join('\n')}`,
+    },
+  ]);
+  await i.editReply(out);
+}
+
+function serverMood(guild: string) {
+  const stats = db
+    .prepare(
+      "SELECT COUNT(*) messages,COUNT(DISTINCT user_id) users FROM messages WHERE guild_id=? AND created_at>datetime('now','-24 hours')",
+    )
+    .get(guild) as any;
+  const reactions = db
+    .prepare('SELECT COALESCE(SUM(reactions),0) n FROM relationships WHERE guild_id=?')
+    .get(guild) as any;
+  const mood =
+    stats.messages === 0
+      ? 'quiet and suspicious'
+      : stats.messages > 200
+        ? 'feral and over-caffeinated'
+        : stats.users > 5
+          ? 'social with a hint of chaos'
+          : 'small-group plotting';
+  return `**Server Mood**\n${mood}\n\nMessages (24h): ${stats.messages}\nPeople active: ${stats.users}\nReaction signals archived: ${reactions.n}`;
+}
+
+function fortune(guild: string, target: User) {
+  const u = db
+    .prepare('SELECT message_count FROM users WHERE guild_id=? AND id=?')
+    .get(guild, target.id) as any;
+  const games = db
+    .prepare(
+      'SELECT game FROM games WHERE guild_id=? AND user_id=? ORDER BY activity_count DESC LIMIT 1',
+    )
+    .get(guild, target.id) as any;
+  const lines = [
+    `${target.displayName} will enter a voice channel “for five minutes” and emerge two hours later.`,
+    `${target.displayName} will accidentally create the next piece of server lore.`,
+    `${target.displayName} will say they are done gaming, then queue one more match.`,
+  ];
+  const pick = ((u?.message_count ?? 0) + (games ? games.game.length : 0)) % lines.length;
+  return `**NPC Fortune for ${target.displayName}**\n${lines[pick]}\n\nEvidence: ${u?.message_count ?? 0} observed messages${games ? `; frequent game: ${games.game}` : ''}.`;
+}
+
+function quoteBattle(guild: string) {
+  const rows = db
+    .prepare(
+      'SELECT q.content,u.display_name FROM quotes q LEFT JOIN users u ON u.id=q.quoted_user_id WHERE q.guild_id=? ORDER BY RANDOM() LIMIT 2',
+    )
+    .all(guild) as any[];
+  return rows.length < 2
+    ? 'not enough archived quotes for a battle. someone say something memorable.'
+    : `**Quote Battle**\n🥊 **${rows[0].display_name}**: “${rows[0].content}”\nvs\n🥊 **${rows[1].display_name}**: “${rows[1].content}”\n\nReact to this message to vote. NPC will declare the winner when the server feels decisive.`;
+}
+
+function memoryCard(guild: string, target: User) {
+  const rows = db
+    .prepare(
+      'SELECT content,category FROM memories WHERE guild_id=? AND user_id=? ORDER BY importance DESC LIMIT 8',
+    )
+    .all(guild, target.id) as any[];
+  return `**NPC Memory Card: ${target.displayName}**\n${rows.length ? rows.map((r) => `${bullet} ${r.content} (${r.category})`).join('\n') : `${bullet} no reliable memories archived yet`}\n\nOnly observations from this server are included.`;
+}
+
+function caseFile(guild: string, target: User) {
+  const u = db
+    .prepare('SELECT message_count,last_seen FROM users WHERE guild_id=? AND id=?')
+    .get(guild, target.id) as any;
+  const quote = db
+    .prepare(
+      'SELECT content FROM quotes WHERE guild_id=? AND quoted_user_id=? ORDER BY score DESC LIMIT 1',
+    )
+    .get(guild, target.id) as any;
+  const game = db
+    .prepare(
+      'SELECT game FROM games WHERE guild_id=? AND user_id=? ORDER BY activity_count DESC LIMIT 1',
+    )
+    .get(guild, target.id) as any;
+  return `**CASE FILE: ${target.displayName}**\n**Status:** ${u ? 'under observation' : 'insufficient evidence'}\n**Transmissions:** ${u?.message_count ?? 0}\n**Last seen:** ${u?.last_seen ?? 'never'}\n**Preferred game:** ${game?.game ?? 'unknown'}\n**Most incriminating quote:** ${quote ? `“${quote.content}”` : 'none archived'}\n**Verdict:** ${u?.message_count > 100 ? 'habitual server presence' : 'still a minor suspect'}.`;
+}
+
+function relationshipCard(guild: string, a: User, b: User) {
+  const r = relationship(guild, a.id, b.id);
+  return `**${a.displayName} × ${b.displayName}**\nMentions: ${r?.mentions ?? 0}\nReplies: ${r?.replies ?? 0}\nNearby messages: ${r?.messages_together ?? 0}\nShared VC: ${Math.round((r?.voice_seconds ?? 0) / 60)} minutes\nRivalry signals: ${r?.rivalry ?? 0}\n**NPC verdict:** ${r ? (r.rivalry > r.mentions + r.replies ? 'friendly opposition' : 'conversation with potential') : 'no interaction evidence yet'}.`;
+}
+
+async function deployCommand(i: ChatInputCommandInteraction, action: 'pull' | 'restart') {
+  if (!config.OWNER_USER_ID || i.user.id !== config.OWNER_USER_ID)
+    return void (await i.reply({
+      content: 'owner controls are sealed.',
+      flags: MessageFlags.Ephemeral,
+    }));
+  await i.deferReply({ flags: MessageFlags.Ephemeral });
+  try {
+    if (action === 'pull') {
+      const pull = await run('git', ['pull', '--ff-only'], { cwd: process.cwd() });
+      const build = await run('npm', ['run', 'build'], { cwd: process.cwd() });
+      return void (await i.editReply(
+        `pull/build complete.\n\`\`\`\n${`${pull.stdout}${build.stdout}`.slice(-1500)}\n\`\`\``,
+      ));
+    }
+    await i.editReply('restart requested. I will be back in a few seconds.');
+    setTimeout(() => void run('pm2', ['restart', 'npc'], { cwd: process.cwd() }), 500);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await i.editReply(`deployment failed: ${message.slice(0, 1000)}`);
+  }
 }
 
 export async function autocomplete(i: AutocompleteInteraction) {
