@@ -1202,9 +1202,9 @@ function statsText(
   ).seconds;
   const games = db
     .prepare(
-      'SELECT game,activity_count FROM games WHERE guild_id=? AND user_id=? ORDER BY activity_count DESC LIMIT 5',
+      'SELECT activity_name game,COUNT(*) activity_count,SUM(duration_seconds) seconds FROM presence_sessions WHERE guild_id=? AND user_id=? AND activity_type=0 AND last_seen>=? AND last_seen<? GROUP BY activity_name ORDER BY seconds DESC LIMIT 5',
     )
-    .all(guild, userId) as any[];
+    .all(guild, userId, bounds.start, bounds.end) as any[];
   const activity = db
     .prepare(
       'SELECT activity_name,SUM(duration_seconds) seconds FROM presence_sessions WHERE guild_id=? AND user_id=? AND last_seen>=? AND last_seen<? GROUP BY activity_name ORDER BY seconds DESC LIMIT 5',
@@ -1222,7 +1222,7 @@ function statsText(
   ];
   if (category === 'all' || category === 'games')
     lines.push(
-      `**Games:** ${games.length ? games.map((g) => `${g.game} (${g.activity_count} sightings)`).join(', ') : 'none recorded'}`,
+      `**Games:** ${games.length ? games.map((g) => `${g.game} (${formatDuration(g.seconds)}, ${g.activity_count} updates)`).join(', ') : 'none recorded'}`,
     );
   if (category === 'all' || category === 'music')
     lines.push(
