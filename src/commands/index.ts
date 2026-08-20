@@ -220,6 +220,19 @@ const simpleCommands = [
     .setDescription('Owner: pause NPC replies while keeping it online'),
   new SlashCommandBuilder().setName('start').setDescription('Owner: resume NPC replies'),
   new SlashCommandBuilder()
+    .setName('clear-user')
+    .setDescription('Owner: delete all NPC records for one user')
+    .addUserOption((o) => o.setName('user').setDescription('User to erase').setRequired(true))
+    .addStringOption((o) =>
+      o.setName('confirm').setDescription('Type DELETE_USER').setRequired(true),
+    ),
+  new SlashCommandBuilder()
+    .setName('clear-all')
+    .setDescription('Owner: wipe all NPC records and start fresh')
+    .addStringOption((o) =>
+      o.setName('confirm').setDescription('Type DELETE_ALL').setRequired(true),
+    ),
+  new SlashCommandBuilder()
     .setName('online')
     .setDescription('See who is online and what they are doing'),
   new SlashCommandBuilder()
@@ -440,6 +453,10 @@ export async function executeCommand(i: ChatInputCommandInteraction) {
       return toggleNpc(i, guild, true);
     case 'start':
       return toggleNpc(i, guild, false);
+    case 'clear-user':
+      return clearUserData(i, guild);
+    case 'clear-all':
+      return clearAllData(i);
     case 'online':
       return void (await i.reply(onlineActivity(guild)));
     case 'activity':
@@ -1449,6 +1466,87 @@ async function toggleNpc(i: ChatInputCommandInteraction, guild: string, paused: 
   ).run(guild, 'npc_paused', paused ? 'true' : 'false', now());
   await i.reply(
     `NPC replies are now **${paused ? 'paused' : 'active'}**. The process stays online, and owner commands still work.`,
+  );
+}
+
+async function clearUserData(i: ChatInputCommandInteraction, guild: string) {
+  if (!config.OWNER_USER_IDS.includes(i.user.id))
+    return void (await i.reply({
+      content: 'owner controls are sealed.',
+      flags: MessageFlags.Ephemeral,
+    }));
+  if (i.options.getString('confirm', true) !== 'DELETE_USER')
+    return void (await i.reply({
+      content: 'Nothing deleted. Type DELETE_USER exactly to confirm.',
+      flags: MessageFlags.Ephemeral,
+    }));
+  const target = i.options.getUser('user', true);
+  db.transaction(() => {
+    const id = target.id;
+    for (const table of [
+      'memories',
+      'messages',
+      'quotes',
+      'achievements',
+      'games',
+      'voice_activity',
+      'presence_sessions',
+      'reputation',
+      'user_state',
+    ])
+      db.prepare(`DELETE FROM ${table} WHERE guild_id=? AND user_id=?`).run(guild, id);
+    db.prepare('DELETE FROM relationships WHERE guild_id=? AND (user_a=? OR user_b=?)').run(
+      guild,
+      id,
+      id,
+    );
+    db.prepare('DELETE FROM phrases WHERE guild_id=? AND (first_user_id=? OR last_user_id=?)').run(
+      guild,
+      id,
+      id,
+    );
+    db.prepare('DELETE FROM lore WHERE guild_id=? AND author_id=?').run(guild, id);
+    db.prepare('DELETE FROM users WHERE guild_id=? AND id=?').run(guild, id);
+  })();
+  await i.reply(`🧹 Deleted NPC records for **${target.displayName}** in this server.`);
+}
+
+async function clearAllData(i: ChatInputCommandInteraction) {
+  if (!config.OWNER_USER_IDS.includes(i.user.id))
+    return void (await i.reply({
+      content: 'owner controls are sealed.',
+      flags: MessageFlags.Ephemeral,
+    }));
+  if (i.options.getString('confirm', true) !== 'DELETE_ALL')
+    return void (await i.reply({
+      content: 'Nothing deleted. Type DELETE_ALL exactly to confirm.',
+      flags: MessageFlags.Ephemeral,
+    }));
+  db.transaction(() => {
+    for (const table of [
+      'messages',
+      'memories',
+      'quotes',
+      'achievements',
+      'games',
+      'voice_activity',
+      'presence_sessions',
+      'relationships',
+      'reputation',
+      'phrases',
+      'lore',
+      'events',
+      'moods',
+      'quests',
+      'npc_journal',
+      'user_state',
+      'settings',
+      'users',
+    ])
+      db.prepare(`DELETE FROM ${table}`).run();
+  })();
+  await i.reply(
+    '🧹 All NPC memories, activity, relationships, lore, and settings were deleted. Fresh archive, same bot.',
   );
 }
 
