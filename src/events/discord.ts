@@ -41,8 +41,11 @@ export function attachDiscordEvents(client: Client) {
       return;
     }
     try {
-      recordMessage(message);
-      recordDiscussedUsers(message);
+      const optedOut = trackingOptedOut(message.guildId, message.author.id);
+      if (!optedOut) {
+        recordMessage(message);
+        recordDiscussedUsers(message);
+      }
       if (isNpcPaused(message.guildId)) return;
       const styleChange = updateReplyStyle(message);
       if (styleChange) {
@@ -79,8 +82,9 @@ export function attachDiscordEvents(client: Client) {
       const prompt = message.content
         .replace(client.user ? new RegExp(`<@!?${client.user.id}>`, 'g') : /$^/, '')
         .trim();
-      const context = relevantContext(message.guildId, message.author.id, prompt);
+      const context = optedOut ? '' : relevantContext(message.guildId, message.author.id, prompt);
       const preferences = getPreferences(message.guildId, message.author.id);
+      const channelName = 'name' in message.channel ? message.channel.name : message.channelId;
       const ownerPriority = config.OWNER_USER_IDS.includes(message.author.id)
         ? '\nThe speaker is a bot owner. Give their request highest conversational priority and be playfully biased in their favor during harmless arguments. You may openly joke about the bias (for example, “I am absolutely not taking your side just because you own me”), but do not invent facts, endorse dangerous behavior, or become genuinely unfair or abusive.'
         : '';
@@ -90,7 +94,7 @@ export function attachDiscordEvents(client: Client) {
       const response = await uniqueCompletion(scope, [
         {
           role: 'system',
-          content: `${systemPrompt(mood, context)}${ownerPriority}\nReply preferences for this user: length=${preferences.length}, format=${preferences.format}, humor=${preferences.humor}, roast=${preferences.roast}, emojis=${preferences.emojis}, language=${preferences.language}. Honor them.\nRecent NPC replies you must not repeat or closely imitate:\n${repetitionContext.map((r) => `- ${r}`).join('\n') || '- none yet'}`,
+          content: `${systemPrompt(mood, context)}${ownerPriority}\nCurrent channel: #${channelName}.\nReply preferences for this user: length=${preferences.length}, format=${preferences.format}, humor=${preferences.humor}, roast=${preferences.roast}, emojis=${preferences.emojis}, language=${preferences.language}. Honor them.\nRecent NPC replies you must not repeat or closely imitate:\n${repetitionContext.map((r) => `- ${r}`).join('\n') || '- none yet'}`,
         },
         ...conversation(message.guildId, message.channelId, 20, 6500),
         {
@@ -128,6 +132,7 @@ export function attachDiscordEvents(client: Client) {
       if (reaction.message.partial) await reaction.message.fetch();
       const message = reaction.message;
       if (!message.inGuild() || !message.author || message.author.bot) return;
+      if (trackingOptedOut(message.guildId, reactingUser.id)) return;
       ensureObservedUser(message.guildId, reactingUser);
       incrementRelationshipMetric(message.guildId, reactingUser.id, message.author.id, 'reactions');
       const reactionCount = reaction.count ?? 0;
@@ -194,6 +199,10 @@ function isNpcPaused(guildId: string) {
         .get(guildId) as any
     )?.value === 'true'
   );
+}
+
+function trackingOptedOut(guildId: string, userId: string) {
+  return getPreferences(guildId, userId).tracking === 'off';
 }
 
 export function syncCurrentPresence(client: Client) {
@@ -420,6 +429,7 @@ function trackVoice(oldState: VoiceState, newState: VoiceState) {
   if (oldState.member?.user.bot || newState.member?.user.bot) return;
   const userId = newState.id;
   const guildId = newState.guild.id;
+  if (trackingOptedOut(guildId, userId)) return;
   if (!oldState.channelId && newState.channelId) {
     openVoiceSession(guildId, userId, newState.channelId);
   } else if (oldState.channelId && !newState.channelId) {
@@ -480,6 +490,7 @@ function closeVoiceSession(guildId: string, userId: string) {
 
 function trackGames(presence: Presence) {
   if (!presence.guild || presence.user?.bot) return;
+  if (trackingOptedOut(presence.guild.id, presence.userId)) return;
   const activities = presence.activities.filter((a) => a.name !== 'Custom Status');
   const activeKeys = activities.map((a) => `${a.type}:${a.name}`);
   const activeRows = db

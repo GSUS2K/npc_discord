@@ -291,12 +291,22 @@ const simpleCommands = [
               { name: 'roast', value: 'roast' },
               { name: 'emojis', value: 'emojis' },
               { name: 'language', value: 'language' },
+              { name: 'tracking', value: 'tracking' },
             ),
         )
         .addStringOption((o) => o.setName('value').setDescription('Value').setRequired(true)),
     )
     .addSubcommand((s) => s.setName('view').setDescription('View your current preferences'))
     .addSubcommand((s) => s.setName('reset').setDescription('Restore all default preferences')),
+  new SlashCommandBuilder()
+    .setName('privacy')
+    .setDescription('See or change NPC tracking for you')
+    .addStringOption((o) =>
+      o
+        .setName('tracking')
+        .setDescription('Whether NPC archives your new activity')
+        .addChoices({ name: 'On', value: 'on' }, { name: 'Off', value: 'off' }),
+    ),
 ];
 
 export const commandData = [lore, quote, ...simpleCommands];
@@ -446,6 +456,8 @@ export async function executeCommand(i: ChatInputCommandInteraction) {
       return statsCommand(i, guild);
     case 'preferences':
       return preferencesCommand(i, guild);
+    case 'privacy':
+      return privacyCommand(i, guild);
   }
 }
 
@@ -1372,6 +1384,7 @@ async function preferencesCommand(i: ChatInputCommandInteraction, guild: string)
       'Russian (Romanized)',
       'Korean (Romanized)',
     ],
+    tracking: ['on', 'off'],
   };
   if (!allowed[setting]?.includes(value))
     return void (await i.reply({
@@ -1380,6 +1393,18 @@ async function preferencesCommand(i: ChatInputCommandInteraction, guild: string)
     }));
   savePreferences(guild, i.user.id, { ...current, [setting]: value } as ReplyPreferences);
   await i.reply(`saved **${setting}: ${value}**. NPC has updated your personal operating system.`);
+}
+
+async function privacyCommand(i: ChatInputCommandInteraction, guild: string) {
+  const requested = i.options.getString('tracking');
+  const preferences = getPreferences(guild, i.user.id);
+  if (requested === 'on' || requested === 'off') {
+    preferences.tracking = requested;
+    savePreferences(guild, i.user.id, preferences);
+  }
+  await i.reply(
+    `**NPC Privacy for ${i.user.displayName}**\nNew activity tracking: **${preferences.tracking}**\n\nWhen on, NPC may archive messages, memories, mentions, relationships, reactions, voice time, games, and shared music/activity. When off, new personal data is not archived. Existing records are not deleted.\n\nTracked scope: channels NPC can read, plus the solitude channel and NPC discussion threads.`,
+  );
 }
 
 async function deployCommand(i: ChatInputCommandInteraction, action: 'pull' | 'restart') {

@@ -7,6 +7,7 @@ export type ReplyPreferences = {
   roast: 'off' | 'playful' | 'savage';
   emojis: 'none' | 'normal' | 'lots';
   language: string;
+  tracking: 'on' | 'off';
 };
 
 export const defaultPreferences: ReplyPreferences = {
@@ -16,6 +17,7 @@ export const defaultPreferences: ReplyPreferences = {
   roast: 'playful',
   emojis: 'normal',
   language: 'English',
+  tracking: 'on',
 };
 
 export function getPreferences(guildId: string, userId: string): ReplyPreferences {
