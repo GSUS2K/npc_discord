@@ -950,8 +950,9 @@ async function deployCommand(i: ChatInputCommandInteraction, action: 'pull' | 'r
     if (action === 'pull') {
       const pull = await run('git', ['pull', '--ff-only'], { cwd: process.cwd() });
       const build = await run('npm', ['run', 'build'], { cwd: process.cwd() });
+      const register = await run('npm', ['run', 'register:prod'], { cwd: process.cwd() });
       return void (await i.editReply(
-        `pull/build complete.\n\`\`\`\n${`${pull.stdout}${build.stdout}`.slice(-1500)}\n\`\`\``,
+        `pull/build/register complete.\n\`\`\`\n${`${pull.stdout}${build.stdout}${register.stdout}`.slice(-1500)}\n\`\`\``,
       ));
     }
     await i.editReply('restart requested. I will be back in a few seconds.');
