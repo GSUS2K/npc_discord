@@ -3,6 +3,7 @@ import {
   ChatInputCommandInteraction,
   MessageFlags,
   SlashCommandBuilder,
+  type TextChannel,
   type User,
 } from 'discord.js';
 import { execFile } from 'node:child_process';
@@ -220,6 +221,18 @@ const simpleCommands = [
   new SlashCommandBuilder()
     .setName('info')
     .setDescription('Show NPC hosting, AI, database, and server information'),
+  new SlashCommandBuilder()
+    .setName('npc-thread')
+    .setDescription('Create an NPC discussion thread for selected members')
+    .addStringOption((o) =>
+      o
+        .setName('topic')
+        .setDescription('What the thread is about')
+        .setRequired(true)
+        .setMaxLength(80),
+    )
+    .addUserOption((o) => o.setName('user').setDescription('Invite a member'))
+    .addUserOption((o) => o.setName('other').setDescription('Invite another member')),
 ];
 
 export const commandData = [lore, quote, ...simpleCommands];
@@ -359,6 +372,8 @@ export async function executeCommand(i: ChatInputCommandInteraction) {
       return void (await i.reply(statusCard(guild)));
     case 'info':
       return void (await i.reply(infoCard(guild)));
+    case 'npc-thread':
+      return createNpcThread(i);
   }
 }
 
@@ -1044,6 +1059,29 @@ function infoCard(guild: string) {
       .filter(Boolean)
       .join(' + ') || 'offline fallback';
   return `**NPC Information**\nHost: ${process.platform} / Node ${process.version}\nDatabase: SQLite (${tables} tables)\nAI providers: ${providers}\nConnected guilds: ${process.env.DISCORD_GUILD_ID ? 1 : 'multiple'}\nThis server: ${guild}\nCommands registered in this build: ${commandData.length}`;
+}
+
+async function createNpcThread(i: ChatInputCommandInteraction) {
+  const channel = i.channel;
+  if (!channel?.isTextBased() || !('threads' in channel))
+    return void (await i.reply({
+      content: 'this channel cannot host an NPC thread.',
+      flags: MessageFlags.Ephemeral,
+    }));
+  const topic = i.options.getString('topic', true);
+  const thread = await (channel as TextChannel).threads.create({
+    name: `npc-${topic}`.slice(0, 100),
+    autoArchiveDuration: 1440,
+    reason: `NPC discussion created by ${i.user.tag}`,
+  });
+  const invites: User[] = [i.user];
+  for (const user of [i.options.getUser('user'), i.options.getUser('other')])
+    if (user && !invites.some((existing) => existing.id === user.id)) invites.push(user);
+  for (const user of invites) await thread.members.add(user.id).catch(() => undefined);
+  await thread.send(
+    `NPC discussion opened by <@${i.user.id}>. Topic: **${topic}**\nEveryone in this thread can talk normally; I’ll follow the conversation here.`,
+  );
+  await i.reply({ content: `thread created: <#${thread.id}>`, flags: MessageFlags.Ephemeral });
 }
 
 async function deployCommand(i: ChatInputCommandInteraction, action: 'pull' | 'restart') {

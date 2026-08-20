@@ -65,9 +65,10 @@ export function attachDiscordEvents(client: Client) {
         message.reference?.messageId !== undefined &&
         message.mentions.repliedUser?.id === client.user?.id;
       const solitude = message.channelId === config.SOLITUDE_CHANNEL_ID;
+      const npcThread = message.channel.isThread() && message.channel.name.startsWith('npc-');
       // NPC is silent elsewhere unless directly mentioned/replied to. Solitude is the one
       // channel where it participates in every human message, like a live conversation.
-      if (!mentioned && !repliedToNpc && !solitude) return;
+      if (!mentioned && !repliedToNpc && !solitude && !npcThread) return;
       await message.channel.sendTyping();
       const prompt = message.content
         .replace(client.user ? new RegExp(`<@!?${client.user.id}>`, 'g') : /$^/, '')
@@ -159,10 +160,21 @@ export function syncCurrentPresence(client: Client) {
 function updateReplyStyle(message: Message<true>): string | null {
   const text = message.content.toLowerCase();
   let style: 'shorter' | 'longer' | 'multiple' | 'normal' | null = null;
-  if (/\b(reply|answer|respond).{0,30}\b(short|shorter|brief)\b/.test(text)) style = 'shorter';
-  else if (/\b(reply|answer|respond).{0,30}\b(long|longer|detail|detailed)\b/.test(text))
+  if (
+    /\b(reply|answer|respond|response|keep it|make it).{0,30}\b(short|shorter|brief|concise|less)\b/.test(
+      text,
+    )
+  )
+    style = 'shorter';
+  else if (
+    /\b(reply|answer|respond|response|make it).{0,30}\b(long|longer|detail|detailed|thorough|more)\b/.test(
+      text,
+    )
+  )
     style = 'longer';
-  else if (/\b(split|multiple|several).{0,20}\b(message|messages|parts)\b/.test(text))
+  else if (
+    /\b(split|multiple|several|break).{0,20}\b(message|messages|parts|responses|that)\b/.test(text)
+  )
     style = 'multiple';
   else if (
     /\b(normal|one message|single message)\b/.test(text) &&
