@@ -65,9 +65,11 @@ export function attachDiscordEvents(client: Client) {
         return;
       }
       const mentioned = client.user ? message.mentions.has(client.user) : false;
-      const repliedToNpc =
-        message.reference?.messageId !== undefined &&
-        message.mentions.repliedUser?.id === client.user?.id;
+      let repliedToNpc = message.mentions.repliedUser?.id === client.user?.id;
+      if (!repliedToNpc && message.reference?.messageId) {
+        const referenced = await message.fetchReference().catch(() => null);
+        repliedToNpc = referenced?.author.id === client.user?.id;
+      }
       const solitude = message.channelId === config.SOLITUDE_CHANNEL_ID;
       const npcThread = message.channel.isThread() && message.channel.name.startsWith('npc-');
       // NPC is silent elsewhere unless directly mentioned/replied to. Solitude is the one

@@ -783,7 +783,7 @@ async function summarizeCommand(i: ChatInputCommandInteraction, guild: string) {
     {
       role: 'system',
       content:
-        'Summarize Discord chat as NPC: concise, witty, factual. Include sections: Main Topic, Summary, Key Participants, Important Decisions, Funniest Moment, Server Mood. Treat @names and reply labels as real social interactions. Mention who talked to, replied to, or called out whom when relevant. Do not invent.',
+        'Summarize only the supplied Discord transcript. Be concise, witty, and factual. Include sections: Main Topic, Summary, Key Participants, Important Decisions, Funniest Moment, Server Mood. Treat @names and reply labels as real social interactions. Mention who talked to, replied to, or called out whom when relevant. Do not invent events, motives, names, quotes, decisions, or “placeholder” activity. If something is unclear, say it is unclear. NPC lines are part of the transcript, not proof that an event happened outside it.',
     },
     { role: 'user', content: `${social}\n\nChat transcript:\n${text}` },
   ]);
