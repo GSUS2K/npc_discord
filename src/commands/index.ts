@@ -420,7 +420,12 @@ function profile(guild: string, target: User) {
       .prepare('SELECT COUNT(*) n FROM achievements WHERE guild_id=? AND user_id=?')
       .get(guild, target.id) as any
   ).n;
-  return `**${target.displayName}**\n\n**Known For:**\n${mem.length ? mem.map((m) => `${bullet} ${m.content}`).join('\n') : `${bullet} being under active investigation by the lore department`}\n\n**Messages Observed:** ${u?.message_count ?? 0}\n**Favorite Habitat:** ${favoriteChannel?.channel_id ? `<#${favoriteChannel.channel_id}> (${favoriteChannel.n} sightings)` : u?.favorite_channel_id ? `<#${u.favorite_channel_id}>` : 'unknown biome'}\n**Favorite Games:** ${games.length ? games.map((g) => g.game).join(', ') : 'not enough evidence'}\n**Common Phrases:** ${phrases.length ? phrases.map((p) => `"${p.phrase}"`).join(', ') : 'still developing a catchphrase'}\n**Active Hour:** ${hour ? `${hour.hour}:00 UTC` : 'unknown'}\n**VC Time:** ${(vc.seconds / 3600).toFixed(1)}h across ${vc.sessions} sessions\n**Quotes Archived:** ${quoteCount}\n**Achievements:** ${achievements}\n**Reputation:** ${Math.min(10, 4 + Math.log10((u?.message_count ?? 0) + quoteCount * 5 + achievements * 10 + 1) * 2).toFixed(1)}/10\n**Threat Level:** ${(u?.message_count ?? 0) > 1000 || vc.seconds > 36000 ? 'Elevated' : 'Moderate'}`;
+  const knownFor = mem.length
+    ? mem.map((m) => `${bullet} ${m.content}`).join('\n')
+    : favoriteChannel?.channel_id
+      ? `${bullet} active in <#${favoriteChannel.channel_id}>`
+      : `${bullet} no specific memories archived yet`;
+  return `**${target.displayName}**\n\n**Known For:**\n${knownFor}\n\n**Messages Observed:** ${u?.message_count ?? 0}\n**Favorite Habitat:** ${favoriteChannel?.channel_id ? `<#${favoriteChannel.channel_id}> (${favoriteChannel.n} sightings)` : u?.favorite_channel_id ? `<#${u.favorite_channel_id}>` : 'unknown biome'}\n**Favorite Games:** ${games.length ? games.map((g) => g.game).join(', ') : 'not enough evidence'}\n**Common Phrases:** ${phrases.length ? phrases.map((p) => `"${p.phrase}"`).join(', ') : 'no repeated phrase detected'}\n**Active Hour:** ${hour ? `${hour.hour}:00 UTC` : 'unknown'}\n**VC Time:** ${(vc.seconds / 3600).toFixed(1)}h across ${vc.sessions} sessions\n**Quotes Archived:** ${quoteCount}\n**Achievements:** ${achievements}\n**Reputation:** ${Math.min(10, 4 + Math.log10((u?.message_count ?? 0) + quoteCount * 5 + achievements * 10 + 1) * 2).toFixed(1)}/10\n**Threat Level:** ${(u?.message_count ?? 0) > 1000 || vc.seconds > 36000 ? 'Elevated' : 'Moderate'}`;
 }
 
 function relationList(guild: string, id: string, rivals: boolean) {
