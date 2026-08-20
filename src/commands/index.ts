@@ -1140,7 +1140,7 @@ async function preferencesCommand(i: ChatInputCommandInteraction, guild: string)
     humor: ['serious', 'light', 'chaotic'],
     roast: ['off', 'playful', 'savage'],
     emojis: ['none', 'normal', 'lots'],
-    language: ['English', 'Hindi', 'Tamil', 'Telugu'],
+    language: ['English', 'Hindi', 'Tamil', 'Telugu', 'Hinglish', 'Tanglish', 'Telgish'],
   };
   if (!allowed[setting]?.includes(value))
     return void (await i.reply({
