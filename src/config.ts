@@ -6,9 +6,9 @@ const schema = z.object({
   DISCORD_CLIENT_ID: z.string().min(1),
   DISCORD_GUILD_ID: z.string().optional(),
   GROQ_API_KEY: z.string().optional(),
-  GROQ_MODEL: z.string().default('llama-3.3-70b-versatile'),
+  GROQ_MODEL: z.string().default('llama-3.1-8b-instant'),
   OPENROUTER_API_KEY: z.string().optional(),
-  OPENROUTER_MODEL: z.string().default('meta-llama/llama-3.3-70b-instruct:free'),
+  OPENROUTER_MODEL: z.string().default('openrouter/free'),
   DATABASE_PATH: z.string().default('./data/npc.sqlite'),
   DASHBOARD_PORT: z.coerce.number().int().positive().default(3000),
   DASHBOARD_SECURE_COOKIES: z
