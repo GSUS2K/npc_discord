@@ -216,6 +216,10 @@ const simpleCommands = [
     .setDescription('Owner: pull and build the latest bot code'),
   new SlashCommandBuilder().setName('restart').setDescription('Owner: restart NPC on the server'),
   new SlashCommandBuilder()
+    .setName('stop')
+    .setDescription('Owner: pause NPC replies while keeping it online'),
+  new SlashCommandBuilder().setName('start').setDescription('Owner: resume NPC replies'),
+  new SlashCommandBuilder()
     .setName('online')
     .setDescription('See who is online and what they are doing'),
   new SlashCommandBuilder()
@@ -422,6 +426,10 @@ export async function executeCommand(i: ChatInputCommandInteraction) {
       return deployCommand(i, 'pull');
     case 'restart':
       return deployCommand(i, 'restart');
+    case 'stop':
+      return toggleNpc(i, guild, true);
+    case 'start':
+      return toggleNpc(i, guild, false);
     case 'online':
       return void (await i.reply(onlineActivity(guild)));
     case 'activity':
@@ -1402,6 +1410,21 @@ async function deployCommand(i: ChatInputCommandInteraction, action: 'pull' | 'r
     const message = error instanceof Error ? error.message : String(error);
     await i.editReply(`deployment failed: ${message.slice(0, 1000)}`);
   }
+}
+
+async function toggleNpc(i: ChatInputCommandInteraction, guild: string, paused: boolean) {
+  if (!config.OWNER_USER_IDS.includes(i.user.id))
+    return void (await i.reply({
+      content: 'owner controls are sealed.',
+      flags: MessageFlags.Ephemeral,
+    }));
+  db.prepare(
+    `INSERT INTO settings(guild_id,key,value,updated_at) VALUES(?,?,?,?)
+    ON CONFLICT(guild_id,key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`,
+  ).run(guild, 'npc_paused', paused ? 'true' : 'false', now());
+  await i.reply(
+    `NPC replies are now **${paused ? 'paused' : 'active'}**. The process stays online, and owner commands still work.`,
+  );
 }
 
 export async function autocomplete(i: AutocompleteInteraction) {

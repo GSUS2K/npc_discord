@@ -43,6 +43,7 @@ export function attachDiscordEvents(client: Client) {
     try {
       recordMessage(message);
       recordDiscussedUsers(message);
+      if (isNpcPaused(message.guildId)) return;
       const styleChange = updateReplyStyle(message);
       if (styleChange) {
         await message.reply({
@@ -153,6 +154,16 @@ export function attachDiscordEvents(client: Client) {
       logger.warn({ error }, 'Reaction tracking failed');
     }
   });
+}
+
+function isNpcPaused(guildId: string) {
+  return (
+    (
+      db
+        .prepare("SELECT value FROM settings WHERE guild_id=? AND key='npc_paused'")
+        .get(guildId) as any
+    )?.value === 'true'
+  );
 }
 
 export function syncCurrentPresence(client: Client) {
