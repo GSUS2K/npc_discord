@@ -151,6 +151,11 @@ export function attachDiscordEvents(client: Client) {
   });
 }
 
+export function syncCurrentPresence(client: Client) {
+  for (const guild of client.guilds.cache.values())
+    for (const presence of guild.presences.cache.values()) trackGames(presence);
+}
+
 function updateReplyStyle(message: Message<true>): string | null {
   const text = message.content.toLowerCase();
   let style: 'shorter' | 'longer' | 'multiple' | 'normal' | null = null;
