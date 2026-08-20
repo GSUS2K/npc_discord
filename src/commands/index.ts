@@ -13,6 +13,12 @@ import { complete } from '../ai/providers.js';
 import { config } from '../config.js';
 import { db, now } from '../database/index.js';
 import { addMemory } from '../memory/service.js';
+import {
+  defaultPreferences,
+  getPreferences,
+  savePreferences,
+  type ReplyPreferences,
+} from '../preferences.js';
 
 const run = promisify(execFile);
 
@@ -233,6 +239,31 @@ const simpleCommands = [
     )
     .addUserOption((o) => o.setName('user').setDescription('Invite a member'))
     .addUserOption((o) => o.setName('other').setDescription('Invite another member')),
+  new SlashCommandBuilder()
+    .setName('preferences')
+    .setDescription('Customize how NPC replies to you')
+    .addSubcommand((s) =>
+      s
+        .setName('set')
+        .setDescription('Change one preference')
+        .addStringOption((o) =>
+          o
+            .setName('setting')
+            .setDescription('Preference')
+            .setRequired(true)
+            .addChoices(
+              { name: 'length', value: 'length' },
+              { name: 'format', value: 'format' },
+              { name: 'humor', value: 'humor' },
+              { name: 'roast', value: 'roast' },
+              { name: 'emojis', value: 'emojis' },
+              { name: 'language', value: 'language' },
+            ),
+        )
+        .addStringOption((o) => o.setName('value').setDescription('Value').setRequired(true)),
+    )
+    .addSubcommand((s) => s.setName('view').setDescription('View your current preferences'))
+    .addSubcommand((s) => s.setName('reset').setDescription('Restore all default preferences')),
 ];
 
 export const commandData = [lore, quote, ...simpleCommands];
@@ -374,6 +405,8 @@ export async function executeCommand(i: ChatInputCommandInteraction) {
       return void (await i.reply(infoCard(guild)));
     case 'npc-thread':
       return createNpcThread(i);
+    case 'preferences':
+      return preferencesCommand(i, guild);
   }
 }
 
@@ -1082,6 +1115,40 @@ async function createNpcThread(i: ChatInputCommandInteraction) {
     `NPC discussion opened by <@${i.user.id}>. Topic: **${topic}**\nEveryone in this thread can talk normally; I’ll follow the conversation here.`,
   );
   await i.reply({ content: `thread created: <#${thread.id}>`, flags: MessageFlags.Ephemeral });
+}
+
+async function preferencesCommand(i: ChatInputCommandInteraction, guild: string) {
+  const sub = i.options.getSubcommand();
+  if (sub === 'reset') {
+    savePreferences(guild, i.user.id, { ...defaultPreferences });
+    return void (await i.reply(
+      'preferences reset. NPC is back to factory settings and has misplaced the manual.',
+    ));
+  }
+  const current = getPreferences(guild, i.user.id);
+  if (sub === 'view')
+    return void (await i.reply(
+      `**Your NPC Preferences**\n${Object.entries(current)
+        .map(([key, value]) => `**${key}:** ${value}`)
+        .join('\n')}`,
+    ));
+  const setting = i.options.getString('setting', true) as keyof ReplyPreferences;
+  const value = i.options.getString('value', true).trim();
+  const allowed: Record<string, string[]> = {
+    length: ['short', 'normal', 'detailed'],
+    format: ['single', 'multiple', 'bullets'],
+    humor: ['serious', 'light', 'chaotic'],
+    roast: ['off', 'playful', 'savage'],
+    emojis: ['none', 'normal', 'lots'],
+    language: ['English', 'Hindi', 'Tamil', 'Telugu'],
+  };
+  if (!allowed[setting]?.includes(value))
+    return void (await i.reply({
+      content: `invalid value. Choose: ${allowed[setting]?.join(', ') ?? 'a listed setting'}.`,
+      flags: MessageFlags.Ephemeral,
+    }));
+  savePreferences(guild, i.user.id, { ...current, [setting]: value } as ReplyPreferences);
+  await i.reply(`saved **${setting}: ${value}**. NPC has updated your personal operating system.`);
 }
 
 async function deployCommand(i: ChatInputCommandInteraction, action: 'pull' | 'restart') {

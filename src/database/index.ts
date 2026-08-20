@@ -25,6 +25,8 @@ for (const column of ['reactions', 'gaming_together']) {
 const userStateColumns = db.prepare('PRAGMA table_info(user_state)').all() as { name: string }[];
 if (!userStateColumns.some((column) => column.name === 'reply_style'))
   db.exec("ALTER TABLE user_state ADD COLUMN reply_style TEXT NOT NULL DEFAULT 'normal'");
+if (!userStateColumns.some((column) => column.name === 'preferences'))
+  db.exec("ALTER TABLE user_state ADD COLUMN preferences TEXT NOT NULL DEFAULT '{}'");
 
 export const now = () => new Date().toISOString();
 export const json = <T>(value: string, fallback: T): T => {

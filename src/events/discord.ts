@@ -8,6 +8,7 @@ import { logger } from '../logger.js';
 import { addMemory, conversation, recordMessage, relevantContext } from '../memory/service.js';
 import { evaluateAchievements, unlock } from '../achievements/service.js';
 import { autocomplete, executeCommand } from '../commands/index.js';
+import { getPreferences, savePreferences } from '../preferences.js';
 
 export function attachDiscordEvents(client: Client) {
   client.on(Events.InteractionCreate, async (interaction) => {
@@ -74,7 +75,7 @@ export function attachDiscordEvents(client: Client) {
         .replace(client.user ? new RegExp(`<@!?${client.user.id}>`, 'g') : /$^/, '')
         .trim();
       const context = relevantContext(message.guildId, message.author.id, prompt);
-      const style = replyStyle(message.guildId, message.author.id);
+      const preferences = getPreferences(message.guildId, message.author.id);
       const ownerPriority = config.OWNER_USER_IDS.includes(message.author.id)
         ? '\nThe speaker is a bot owner. Give their request highest conversational priority and be playfully biased in their favor during harmless arguments. You may openly joke about the bias (for example, “I am absolutely not taking your side just because you own me”), but do not invent facts, endorse dangerous behavior, or become genuinely unfair or abusive.'
         : '';
@@ -84,7 +85,7 @@ export function attachDiscordEvents(client: Client) {
       const response = await uniqueCompletion(scope, [
         {
           role: 'system',
-          content: `${systemPrompt(mood, context)}${ownerPriority}\nReply style preference for this user: ${style}. Honor it.\nRecent NPC replies you must not repeat or closely imitate:\n${repetitionContext.map((r) => `- ${r}`).join('\n') || '- none yet'}`,
+          content: `${systemPrompt(mood, context)}${ownerPriority}\nReply preferences for this user: length=${preferences.length}, format=${preferences.format}, humor=${preferences.humor}, roast=${preferences.roast}, emojis=${preferences.emojis}, language=${preferences.language}. Honor them.\nRecent NPC replies you must not repeat or closely imitate:\n${repetitionContext.map((r) => `- ${r}`).join('\n') || '- none yet'}`,
         },
         ...conversation(message.guildId, message.channelId, 20, 6500),
         {
@@ -92,7 +93,7 @@ export function attachDiscordEvents(client: Client) {
           content: `${message.member?.displayName ?? message.author.displayName}: ${prompt || 'looks expectantly at NPC'}`,
         },
       ]);
-      const chunks = style === 'multiple' ? splitReply(response) : [response];
+      const chunks = preferences.format === 'multiple' ? splitReply(response) : [response];
       await message.reply({
         content: chunks[0]!,
         allowedMentions: { repliedUser: false, parse: [] },
@@ -182,21 +183,17 @@ function updateReplyStyle(message: Message<true>): string | null {
   )
     style = 'normal';
   if (!style) return null;
+  const preferences = getPreferences(message.guildId, message.author.id);
+  if (style === 'shorter') preferences.length = 'short';
+  if (style === 'longer') preferences.length = 'detailed';
+  if (style === 'multiple') preferences.format = 'multiple';
+  if (style === 'normal') preferences.format = 'single';
+  savePreferences(message.guildId, message.author.id, preferences);
   db.prepare(
     `INSERT INTO user_state(guild_id,user_id,reply_style) VALUES(?,?,?)
     ON CONFLICT(guild_id,user_id) DO UPDATE SET reply_style=excluded.reply_style`,
   ).run(message.guildId, message.author.id, style);
   return `reply style saved: **${style}**. I’ll use that for your next messages.`;
-}
-
-function replyStyle(guildId: string, userId: string) {
-  return (
-    (
-      db
-        .prepare('SELECT reply_style FROM user_state WHERE guild_id=? AND user_id=?')
-        .get(guildId, userId) as any
-    )?.reply_style ?? 'normal'
-  );
 }
 
 function splitReply(text: string) {
