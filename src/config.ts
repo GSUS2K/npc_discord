@@ -6,7 +6,7 @@ const schema = z.object({
   DISCORD_CLIENT_ID: z.string().min(1),
   DISCORD_GUILD_ID: z.string().optional(),
   GROQ_API_KEY: z.string().optional(),
-  GROQ_MODEL: z.string().default('llama-3.1-8b-instant'),
+  GROQ_MODEL: z.string().default('openai/gpt-oss-120b'),
   OPENROUTER_API_KEY: z.string().optional(),
   OPENROUTER_MODEL: z.string().default('openrouter/free'),
   DATABASE_PATH: z.string().default('./data/npc.sqlite'),
