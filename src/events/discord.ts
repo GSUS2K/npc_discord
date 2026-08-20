@@ -76,7 +76,7 @@ export function attachDiscordEvents(client: Client) {
       const context = relevantContext(message.guildId, message.author.id, prompt);
       const style = replyStyle(message.guildId, message.author.id);
       const ownerPriority = config.OWNER_USER_IDS.includes(message.author.id)
-        ? '\nThe speaker is a bot owner. Give their request highest conversational priority, listen carefully, and be especially respectful while remaining natural.'
+        ? '\nThe speaker is a bot owner. Give their request highest conversational priority and be playfully biased in their favor during harmless arguments. You may openly joke about the bias (for example, “I am absolutely not taking your side just because you own me”), but do not invent facts, endorse dangerous behavior, or become genuinely unfair or abusive.'
         : '';
       const mood = currentMood(message.guildId);
       const scope = `${message.guildId}:${message.channelId}`;
