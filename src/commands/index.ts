@@ -96,6 +96,23 @@ const tldr = new SlashCommandBuilder()
         { name: '50 messages', value: '50' },
         { name: '100 messages', value: '100' },
         { name: 'today', value: 'today' },
+        { name: 'custom count', value: 'custom' },
+      ),
+  )
+  .addIntegerOption((o) =>
+    o
+      .setName('messages')
+      .setDescription('Custom message count (1–300)')
+      .setMinValue(1)
+      .setMaxValue(300),
+  )
+  .addStringOption((o) =>
+    o
+      .setName('scope')
+      .setDescription('Current channel or whole server')
+      .addChoices(
+        { name: 'Current channel', value: 'channel' },
+        { name: 'Whole server', value: 'server' },
       ),
   );
 const recap = new SlashCommandBuilder()
@@ -802,23 +819,29 @@ function messagesSince(guild: string, since: string, limit = 120) {
 async function summarizeCommand(i: ChatInputCommandInteraction, guild: string) {
   await i.deferReply();
   const amount = i.options.getString('amount') ?? '50';
+  const customCount = i.options.getInteger('messages') ?? 50;
+  const scope = i.options.getString('scope') ?? 'channel';
   const since =
     amount === 'today'
       ? new Date(new Date().setHours(0, 0, 0, 0)).toISOString()
       : '1970-01-01T00:00:00.000Z';
-  const limit = amount === 'today' ? 150 : Number(amount);
+  const limit = amount === 'today' ? 150 : amount === 'custom' ? customCount : Number(amount);
   const rows =
-    amount === 'today'
-      ? messagesSince(guild, since, limit)
+    scope === 'server'
+      ? messagesSince(guild, amount === 'today' ? since : '1970-01-01T00:00:00.000Z', limit)
       : (db
           .prepare(
             `SELECT m.content,m.user_id,m.reply_to_user_id,u.display_name,ru.display_name reply_to_display_name
             FROM messages m
             LEFT JOIN users u ON u.id=m.user_id AND u.guild_id=m.guild_id
             LEFT JOIN users ru ON ru.id=m.reply_to_user_id AND ru.guild_id=m.guild_id
-            WHERE m.guild_id=? AND m.channel_id=? ORDER BY m.created_at DESC LIMIT ?`,
+            WHERE m.guild_id=? AND m.channel_id=? ${amount === 'today' ? 'AND m.created_at>?' : ''} ORDER BY m.created_at DESC LIMIT ?`,
           )
-          .all(guild, i.channelId, limit)
+          .all(
+            ...(amount === 'today'
+              ? [guild, i.channelId, since, limit]
+              : [guild, i.channelId, limit]),
+          )
           .reverse() as any[]);
   if (!rows.length) return void (await i.editReply('nothing to summarize. the void is concise.'));
   const social = summarizeInteractions(guild, rows);
