@@ -286,6 +286,25 @@ const simpleCommands = [
         ),
     ),
   new SlashCommandBuilder()
+    .setName('summary')
+    .setDescription('Generate a custom server summary')
+    .addStringOption((o) =>
+      o
+        .setName('period')
+        .setDescription('Summary period')
+        .setRequired(true)
+        .addChoices(
+          { name: 'Today', value: 'today' },
+          { name: 'This week', value: 'week' },
+          { name: 'This month', value: 'month' },
+          { name: 'This year', value: 'year' },
+          { name: 'Custom days', value: 'custom' },
+        ),
+    )
+    .addIntegerOption((o) =>
+      o.setName('days').setDescription('Custom period: 1–365 days').setMinValue(1).setMaxValue(365),
+    ),
+  new SlashCommandBuilder()
     .setName('preferences')
     .setDescription('Customize how NPC replies to you')
     .addSubcommand((s) =>
@@ -471,6 +490,8 @@ export async function executeCommand(i: ChatInputCommandInteraction) {
       return createNpcThread(i);
     case 'stats':
       return statsCommand(i, guild);
+    case 'summary':
+      return summaryCommand(i, guild);
     case 'preferences':
       return preferencesCommand(i, guild);
     case 'privacy':
@@ -1294,6 +1315,55 @@ async function statsCommand(i: ChatInputCommandInteraction, guild: string) {
     content: statsText(guild, i.user.id, period, category),
     components: statsButtons(i.user.id, period, category, 0),
   });
+}
+
+async function summaryCommand(i: ChatInputCommandInteraction, guild: string) {
+  const period = i.options.getString('period', true);
+  const customDays = i.options.getInteger('days') ?? 7;
+  const days =
+    period === 'today'
+      ? 1
+      : period === 'week'
+        ? 7
+        : period === 'month'
+          ? 30
+          : period === 'year'
+            ? 365
+            : customDays;
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+  await i.deferReply();
+  const rows = db
+    .prepare(
+      `SELECT m.content,m.user_id,m.reply_to_user_id,u.display_name,ru.display_name reply_to_display_name
+    FROM messages m LEFT JOIN users u ON u.guild_id=m.guild_id AND u.id=m.user_id
+    LEFT JOIN users ru ON ru.guild_id=m.guild_id AND ru.id=m.reply_to_user_id
+    WHERE m.guild_id=? AND m.created_at>? ORDER BY m.created_at DESC LIMIT 300`,
+    )
+    .all(guild, since)
+    .reverse() as any[];
+  if (!rows.length)
+    return void (await i.editReply(
+      `No messages were archived in the last ${days} day${days === 1 ? '' : 's'}. The server has entered stealth mode.`,
+    ));
+  const transcript = rows
+    .map(
+      (r) =>
+        `${r.display_name ?? `<@${r.user_id}>`}${r.reply_to_display_name ? ` replying to ${r.reply_to_display_name}` : ''}: ${humanizeMentions(guild, r.content)}`,
+    )
+    .join('\n')
+    .slice(-11000);
+  const out = await complete([
+    {
+      role: 'system',
+      content:
+        'Summarize only the supplied Discord transcript. Be witty but factual. Include Main Topic, Summary, Key Participants, Decisions, Funniest Moment, Server Mood, and Interaction Map. Do not invent events, names, motives, or quotes. Label uncertainty.',
+    },
+    {
+      role: 'user',
+      content: `Period: last ${days} days\n${summarizeInteractions(guild, rows)}\n\nTranscript:\n${transcript}`,
+    },
+  ]);
+  await i.editReply(`**${period === 'custom' ? `Last ${days} days` : period}**\n${out}`);
 }
 
 function statsButtons(
