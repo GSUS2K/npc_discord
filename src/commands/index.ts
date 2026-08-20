@@ -203,6 +203,16 @@ const simpleCommands = [
     .setName('pull')
     .setDescription('Owner: pull and build the latest bot code'),
   new SlashCommandBuilder().setName('restart').setDescription('Owner: restart NPC on the server'),
+  new SlashCommandBuilder()
+    .setName('online')
+    .setDescription('See who is online and what they are doing'),
+  new SlashCommandBuilder()
+    .setName('activity')
+    .setDescription("Inspect a member's live and recent activity")
+    .addUserOption((o) => o.setName('user').setDescription('Member')),
+  new SlashCommandBuilder()
+    .setName('activity-stats')
+    .setDescription('See server-wide game, music, and activity statistics'),
 ];
 
 export const commandData = [lore, quote, ...simpleCommands];
@@ -332,6 +342,12 @@ export async function executeCommand(i: ChatInputCommandInteraction) {
       return deployCommand(i, 'pull');
     case 'restart':
       return deployCommand(i, 'restart');
+    case 'online':
+      return void (await i.reply(onlineActivity(guild)));
+    case 'activity':
+      return void (await i.reply(activityCard(guild, target)));
+    case 'activity-stats':
+      return void (await i.reply(activityStats(guild)));
   }
 }
 
@@ -937,6 +953,62 @@ function caseFile(guild: string, target: User) {
 function relationshipCard(guild: string, a: User, b: User) {
   const r = relationship(guild, a.id, b.id);
   return `**${a.displayName} × ${b.displayName}**\nMentions: ${r?.mentions ?? 0}\nReplies: ${r?.replies ?? 0}\nNearby messages: ${r?.messages_together ?? 0}\nShared VC: ${Math.round((r?.voice_seconds ?? 0) / 60)} minutes\nRivalry signals: ${r?.rivalry ?? 0}\n**NPC verdict:** ${r ? (r.rivalry > r.mentions + r.replies ? 'friendly opposition' : 'conversation with potential') : 'no interaction evidence yet'}.`;
+}
+
+function formatDuration(seconds: number) {
+  const minutes = Math.max(0, Math.floor(seconds / 60));
+  return minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+function onlineActivity(guild: string) {
+  const rows = db
+    .prepare(
+      `SELECT p.user_id,u.display_name,p.status,p.activity_name,p.details,p.state,p.started_at,p.duration_seconds
+    FROM presence_sessions p LEFT JOIN users u ON u.guild_id=p.guild_id AND u.id=p.user_id
+    WHERE p.guild_id=? AND p.ended_at IS NULL AND p.last_seen>? ORDER BY p.status,p.activity_name`,
+    )
+    .all(guild, new Date(Date.now() - 10 * 60_000).toISOString()) as any[];
+  const unique = new Map<string, any>();
+  for (const row of rows) unique.set(`${row.user_id}:${row.activity_name}`, row);
+  return `**Live Server Activity**\n${[...unique.values()].length ? [...unique.values()].map((r) => `${r.status === 'online' ? '🟢' : r.status === 'idle' ? '🌙' : '⛔'} **${r.display_name ?? nameOf(guild, r.user_id)}** — ${r.activity_name ? `${r.activity_name}${r.details ? ` · ${r.details}` : ''}${r.state ? ` (${r.state})` : ''} · ${formatDuration(r.duration_seconds)}` : 'online, no activity shared'}`).join('\n') : 'Nobody is sharing live activity right now.'}`;
+}
+
+function activityCard(guild: string, target: User) {
+  const live = db
+    .prepare(
+      `SELECT * FROM presence_sessions WHERE guild_id=? AND user_id=? AND ended_at IS NULL ORDER BY last_seen DESC`,
+    )
+    .all(guild, target.id) as any[];
+  const recent = db
+    .prepare(
+      `SELECT activity_name,activity_type,SUM(duration_seconds) seconds,COUNT(*) sessions,MAX(last_seen) last_seen FROM presence_sessions WHERE guild_id=? AND user_id=? GROUP BY activity_name,activity_type ORDER BY seconds DESC LIMIT 8`,
+    )
+    .all(guild, target.id) as any[];
+  const music = db
+    .prepare(
+      `SELECT music_track,music_artist,MAX(last_seen) last_seen FROM presence_sessions WHERE guild_id=? AND user_id=? AND music_track IS NOT NULL ORDER BY last_seen DESC LIMIT 5`,
+    )
+    .all(guild, target.id) as any[];
+  return `**${target.displayName}'s Activity**\n**Live:** ${live.length ? live.map((r) => `${r.activity_name ?? 'online'} (${formatDuration(r.duration_seconds)})`).join(', ') : 'not currently sharing activity'}\n**History:** ${recent.length ? recent.map((r) => `${r.activity_name ?? 'unknown'} — ${formatDuration(r.seconds)} across ${r.sessions} sessions`).join('\n') : 'no activity recorded yet'}\n**Music:** ${music.length ? music.map((m) => `${m.music_track}${m.music_artist ? ` — ${m.music_artist}` : ''}`).join('\n') : 'no Spotify activity exposed'}`;
+}
+
+function activityStats(guild: string) {
+  const games = db
+    .prepare(
+      `SELECT activity_name name,SUM(duration_seconds) seconds,COUNT(DISTINCT user_id) users FROM presence_sessions WHERE guild_id=? AND activity_type=0 GROUP BY activity_name ORDER BY seconds DESC LIMIT 10`,
+    )
+    .all(guild) as any[];
+  const music = db
+    .prepare(
+      `SELECT music_track track,music_artist artist,COUNT(DISTINCT user_id) listeners FROM presence_sessions WHERE guild_id=? AND music_track IS NOT NULL GROUP BY music_track,music_artist ORDER BY listeners DESC LIMIT 8`,
+    )
+    .all(guild) as any[];
+  const statuses = db
+    .prepare(
+      `SELECT status,COUNT(DISTINCT user_id) users FROM presence_sessions WHERE guild_id=? AND ended_at IS NULL AND last_seen>? GROUP BY status`,
+    )
+    .all(guild, new Date(Date.now() - 10 * 60_000).toISOString()) as any[];
+  return `**Server Activity Census**\n**Live statuses:** ${statuses.length ? statuses.map((s) => `${s.status}: ${s.users}`).join(' · ') : 'no live presence data'}\n\n**Games/apps by recorded time:** ${games.length ? games.map((g) => `${g.name} — ${formatDuration(g.seconds)} (${g.users} users)`).join('\n') : 'no games recorded'}\n\n**Music currently/recently exposed:** ${music.length ? music.map((m) => `${m.track}${m.artist ? ` — ${m.artist}` : ''} (${m.listeners} listeners)`).join('\n') : 'no music activity recorded'}`;
 }
 
 async function deployCommand(i: ChatInputCommandInteraction, action: 'pull' | 'restart') {

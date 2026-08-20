@@ -42,6 +42,13 @@ CREATE TABLE IF NOT EXISTS games (
   minutes_detected INTEGER NOT NULL DEFAULT 0, last_seen TEXT NOT NULL, preferences TEXT NOT NULL DEFAULT '{}',
   PRIMARY KEY(guild_id, user_id, game)
 );
+CREATE TABLE IF NOT EXISTS presence_sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, guild_id TEXT NOT NULL, user_id TEXT NOT NULL,
+  status TEXT NOT NULL, activity_type INTEGER, activity_name TEXT, details TEXT, state TEXT,
+  application_id TEXT, started_at TEXT NOT NULL, last_seen TEXT NOT NULL, ended_at TEXT,
+  duration_seconds INTEGER NOT NULL DEFAULT 0, music_track TEXT, music_artist TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_presence_live ON presence_sessions(guild_id, user_id, ended_at, last_seen);
 CREATE TABLE IF NOT EXISTS voice_activity (
   id INTEGER PRIMARY KEY AUTOINCREMENT, guild_id TEXT NOT NULL, user_id TEXT NOT NULL, channel_id TEXT NOT NULL,
   joined_at TEXT NOT NULL, left_at TEXT, duration_seconds INTEGER NOT NULL DEFAULT 0

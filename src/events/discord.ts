@@ -352,10 +352,68 @@ function closeVoiceSession(guildId: string, userId: string) {
 
 function trackGames(presence: Presence) {
   if (!presence.guild || presence.user?.bot) return;
-  for (const activity of presence.activities.filter(
-    (a) => a.type === 0 && a.name !== 'Custom Status',
-  )) {
+  const activities = presence.activities.filter((a) => a.name !== 'Custom Status');
+  const activeKeys = activities.map((a) => `${a.type}:${a.name}`);
+  const activeRows = db
+    .prepare(
+      'SELECT id,activity_type,activity_name,started_at FROM presence_sessions WHERE guild_id=? AND user_id=? AND ended_at IS NULL',
+    )
+    .all(presence.guild.id, presence.userId) as any[];
+  for (const row of activeRows) {
+    if (!activeKeys.includes(`${row.activity_type}:${row.activity_name}`))
+      db.prepare(
+        'UPDATE presence_sessions SET ended_at=?,last_seen=?,duration_seconds=? WHERE id=?',
+      ).run(
+        now(),
+        now(),
+        Math.max(0, Math.floor((Date.now() - Date.parse(row.started_at)) / 1000)),
+        row.id,
+      );
+  }
+  for (const activity of activities) {
     const game = activity.name.slice(0, 100);
+    const existing = db
+      .prepare(
+        'SELECT id,started_at FROM presence_sessions WHERE guild_id=? AND user_id=? AND activity_type=? AND activity_name=? AND ended_at IS NULL ORDER BY id DESC LIMIT 1',
+      )
+      .get(presence.guild.id, presence.userId, activity.type, game) as any;
+    const started = activity.timestamps?.start?.toISOString() ?? existing?.started_at ?? now();
+    const music =
+      activity.name.toLowerCase() === 'spotify'
+        ? (activity.details ?? activity.state ?? null)
+        : null;
+    const artist = activity.name.toLowerCase() === 'spotify' ? (activity.state ?? null) : null;
+    if (existing)
+      db.prepare(
+        'UPDATE presence_sessions SET status=?,details=?,state=?,last_seen=?,duration_seconds=?,music_track=?,music_artist=? WHERE id=?',
+      ).run(
+        presence.status,
+        activity.details ?? null,
+        activity.state ?? null,
+        now(),
+        Math.max(0, Math.floor((Date.now() - Date.parse(started)) / 1000)),
+        music,
+        artist,
+        existing.id,
+      );
+    else
+      db.prepare(
+        'INSERT INTO presence_sessions(guild_id,user_id,status,activity_type,activity_name,details,state,application_id,started_at,last_seen,duration_seconds,music_track,music_artist) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      ).run(
+        presence.guild.id,
+        presence.userId,
+        presence.status,
+        activity.type,
+        game,
+        activity.details ?? null,
+        activity.state ?? null,
+        activity.applicationId ?? null,
+        started,
+        now(),
+        Math.max(0, Math.floor((Date.now() - Date.parse(started)) / 1000)),
+        music,
+        artist,
+      );
     db.prepare(
       `INSERT INTO games(guild_id,user_id,game,activity_count,last_seen) VALUES(?,?,?,1,?)
       ON CONFLICT(guild_id,user_id,game) DO UPDATE SET activity_count=activity_count+1,last_seen=excluded.last_seen`,
@@ -378,4 +436,7 @@ function trackGames(presence: Presence) {
         'gaming_together',
       );
   }
+  db.prepare(
+    'UPDATE presence_sessions SET status=?,last_seen=? WHERE guild_id=? AND user_id=? AND ended_at IS NULL',
+  ).run(presence.status, now(), presence.guild.id, presence.userId);
 }
