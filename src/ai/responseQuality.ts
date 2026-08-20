@@ -61,7 +61,10 @@ export async function uniqueCompletion(scope: string, messages: ChatMessage[]) {
     )
       break;
   }
-  if (history.some((entry) => entry.normalized === normalize(candidate)))
+  if (
+    history.some((entry) => entry.normalized === normalize(candidate)) &&
+    !candidate.includes('AI provider')
+  )
     candidate = `the dialogue loop tried to claim me again. anyway: ${candidate.slice(0, 1650)}`;
   history.push({ text: candidate, normalized: normalize(candidate), at: Date.now() });
   recent.set(scope, history.slice(-20));

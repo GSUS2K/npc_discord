@@ -69,5 +69,19 @@ export async function complete(messages: ChatMessage[]): Promise<string> {
       logger.warn({ provider: provider.name, error }, 'AI provider failed; trying fallback');
     }
   }
-  return 'my dialogue tree just fell down the stairs. try me again in a minute.';
+  // Keep the bot useful when an API key is missing, exhausted, or temporarily down.
+  // A single canned sentence made every user receive the same confusing response.
+  const input = messages.filter((message) => message.role === 'user').at(-1)?.content ?? '';
+  const lower = input.toLowerCase();
+  if (/\b(who are you|who r u|what are you)\b/.test(lower))
+    return 'I’m NPC — the server’s own memory-keeping bot. My AI provider is temporarily offline, but I’m still here.';
+  if (/\b(hi|hello|hey)\b/.test(lower.trim()))
+    return 'hey. I’m NPC. The archive is online, though my clever brain is temporarily buffering.';
+  const options = [
+    'I caught that, but my language engine is temporarily offline. Try again shortly.',
+    'The archive heard you; the reply engine is taking a short coffee break. Try again in a moment.',
+    'I’m here, but the AI provider is unavailable right now. Your message was still archived.',
+  ];
+  const hash = [...input].reduce((sum, character) => sum + character.charCodeAt(0), 0);
+  return options[hash % options.length]!;
 }
