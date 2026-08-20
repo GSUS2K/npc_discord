@@ -40,6 +40,14 @@ export function attachDiscordEvents(client: Client) {
     try {
       recordMessage(message);
       recordDiscussedUsers(message);
+      const styleChange = updateReplyStyle(message);
+      if (styleChange) {
+        await message.reply({
+          content: styleChange,
+          allowedMentions: { parse: [], repliedUser: false },
+        });
+        return;
+      }
       evaluateAchievements(message.guildId, message.author.id);
       learnExplicitMemory(message);
       await detectInsideJoke(message);
@@ -65,6 +73,7 @@ export function attachDiscordEvents(client: Client) {
         .replace(client.user ? new RegExp(`<@!?${client.user.id}>`, 'g') : /$^/, '')
         .trim();
       const context = relevantContext(message.guildId, message.author.id, prompt);
+      const style = replyStyle(message.guildId, message.author.id);
       const ownerPriority = config.OWNER_USER_IDS.includes(message.author.id)
         ? '\nThe speaker is a bot owner. Give their request highest conversational priority, listen carefully, and be especially respectful while remaining natural.'
         : '';
@@ -74,7 +83,7 @@ export function attachDiscordEvents(client: Client) {
       const response = await uniqueCompletion(scope, [
         {
           role: 'system',
-          content: `${systemPrompt(mood, context)}${ownerPriority}\nRecent NPC replies you must not repeat or closely imitate:\n${repetitionContext.map((r) => `- ${r}`).join('\n') || '- none yet'}`,
+          content: `${systemPrompt(mood, context)}${ownerPriority}\nReply style preference for this user: ${style}. Honor it.\nRecent NPC replies you must not repeat or closely imitate:\n${repetitionContext.map((r) => `- ${r}`).join('\n') || '- none yet'}`,
         },
         ...conversation(message.guildId, message.channelId, 20, 6500),
         {
@@ -82,10 +91,16 @@ export function attachDiscordEvents(client: Client) {
           content: `${message.member?.displayName ?? message.author.displayName}: ${prompt || 'looks expectantly at NPC'}`,
         },
       ]);
+      const chunks = style === 'multiple' ? splitReply(response) : [response];
       await message.reply({
-        content: response,
+        content: chunks[0]!,
         allowedMentions: { repliedUser: false, parse: [] },
       });
+      for (const chunk of chunks.slice(1))
+        await message.channel.send({
+          content: chunk,
+          allowedMentions: { parse: [], repliedUser: false },
+        });
     } catch (error) {
       logger.error({ error, messageId: message.id }, 'Message processing failed');
     }
@@ -134,6 +149,55 @@ export function attachDiscordEvents(client: Client) {
       logger.warn({ error }, 'Reaction tracking failed');
     }
   });
+}
+
+function updateReplyStyle(message: Message<true>): string | null {
+  const text = message.content.toLowerCase();
+  let style: 'shorter' | 'longer' | 'multiple' | 'normal' | null = null;
+  if (/\b(reply|answer|respond).{0,30}\b(short|shorter|brief)\b/.test(text)) style = 'shorter';
+  else if (/\b(reply|answer|respond).{0,30}\b(long|longer|detail|detailed)\b/.test(text))
+    style = 'longer';
+  else if (/\b(split|multiple|several).{0,20}\b(message|messages|parts)\b/.test(text))
+    style = 'multiple';
+  else if (
+    /\b(normal|one message|single message)\b/.test(text) &&
+    /reply|answer|respond/.test(text)
+  )
+    style = 'normal';
+  if (!style) return null;
+  db.prepare(
+    `INSERT INTO user_state(guild_id,user_id,reply_style) VALUES(?,?,?)
+    ON CONFLICT(guild_id,user_id) DO UPDATE SET reply_style=excluded.reply_style`,
+  ).run(message.guildId, message.author.id, style);
+  return `reply style saved: **${style}**. I’ll use that for your next messages.`;
+}
+
+function replyStyle(guildId: string, userId: string) {
+  return (
+    (
+      db
+        .prepare('SELECT reply_style FROM user_state WHERE guild_id=? AND user_id=?')
+        .get(guildId, userId) as any
+    )?.reply_style ?? 'normal'
+  );
+}
+
+function splitReply(text: string) {
+  const sentences = text
+    .match(/[^.!?]+[.!?]+|[^.!?]+$/g)
+    ?.map((part) => part.trim())
+    .filter(Boolean) ?? [text];
+  const chunks: string[] = [];
+  let current = '';
+  for (const sentence of sentences) {
+    if (current && `${current} ${sentence}`.length > 1700) {
+      chunks.push(current);
+      current = '';
+    }
+    current = current ? `${current} ${sentence}` : sentence;
+  }
+  if (current) chunks.push(current);
+  return chunks.slice(0, 4);
 }
 
 function recordDiscussedUsers(message: Message<true>) {

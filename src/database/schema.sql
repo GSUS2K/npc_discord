@@ -91,5 +91,5 @@ CREATE TABLE IF NOT EXISTS npc_journal (
   id INTEGER PRIMARY KEY AUTOINCREMENT, guild_id TEXT NOT NULL, content TEXT NOT NULL, period_start TEXT NOT NULL, created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS user_state (
-  guild_id TEXT NOT NULL, user_id TEXT NOT NULL, last_catchup_at TEXT, PRIMARY KEY(guild_id,user_id)
+  guild_id TEXT NOT NULL, user_id TEXT NOT NULL, last_catchup_at TEXT, reply_style TEXT NOT NULL DEFAULT 'normal', PRIMARY KEY(guild_id,user_id)
 );
